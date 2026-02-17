@@ -5,6 +5,9 @@ class _INT_VALUE():
     def __init__(self, value: int):
         self.value: int = value
 
+    def get_int(self):
+        return self.value
+
     def get_bytes(self):
         return self.value.to_bytes(2, 'big')
 

@@ -19,7 +19,7 @@ import ssftp
 if __name__ == "__main__":
 
     sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    sock.bind(('', ssftp.SERVER_LISTEN_PORT))
+    sock.bind(('', 30000))
 
     messages = {
 
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     for message_name in messages:
         print(f"sending {message_name}...")
-        sock.sendto(messages[message_name].encode(), ('127.0.0.1', 5555))
+        sock.sendto(messages[message_name].encode(), ('192.168.68.70', ssftp.SERVER_LISTEN_PORT))
 
     sock.close()
 
