@@ -3,21 +3,6 @@ import ssftp
 import os
 import time
 
-
-# def get_my_ip():
-#     """Attempts to get the local network IP. Falls back to localhost."""
-#     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-#     try:
-#         s.connect(('10.255.255.255', 1))
-#         IP = s.getsockname()[0]
-#     except Exception:
-#         # Fallback to localhost
-#         IP = '127.0.0.1'
-#     finally:
-#         s.close()
-#     return IP
-
-
 if __name__ == "__main__":
 
     sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
@@ -44,10 +29,6 @@ if __name__ == "__main__":
     #         "fin": ssftp.MSG_FIN(ssftp.EXITCODE.SUCCESS),
     #         "finack": ssftp.MSG_FINACK()
     # }
-
-    # for message_name in messages:
-    #     print(f"sending {message_name}...")
-    #     sock.sendto(messages[message_name].encode(), ('192.168.68.70', ssftp.SERVER_LISTEN_PORT))
 
     syn = ssftp.MSG_SYN()
     print(f"sending syn message...")
@@ -110,23 +91,4 @@ if __name__ == "__main__":
     data2 = sock.recv(2048)
     print(data2)
 
-    # ack3 = ssftp.MSG_ACK(3)
-    # print("sending ack 3")
-    # sock.sendto(ack3.encode(), ('192.168.68.70', newport))
-    #
-    # data3 = sock.recv(2048)
-    # print(data3)
-
-    # for message_name in messages: 
-    #     if message_name == "syn":
-    #         continue
-    #     print(f"sending {message_name}...")
-    #     sock.sendto(messages[message_name].encode(), ('192.168.68.70', newport))
-    #
-    #     if "dwn" in message_name or "upl" in message_name:
-    #         oack = sock.recv(2048)
-    #         print(oack)
-
     sock.close()
-
-    # sock.send(mystr.encode() + b"0" )

@@ -257,7 +257,7 @@ class SSFTPServer():
         self.connections[addr]["options"]["filename"] = filename
         self.connections[addr]["options"]["data"] = bytes()
         self.connections[addr]["options"]["terminating_block"] = False
-        self.connections[addr]["options"]["pending_ack"] = initial_block + 1
+        self.connections[addr]["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
@@ -288,15 +288,12 @@ class SSFTPServer():
             # determine if current segment is terminating
             if len(d_send) < opts["blksize"]:
                 opts["terminating_block"] = True
-                print("End of file reached!")
+                self.logger.info("End of file reached!")
 
             # nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
             # self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
 
             self.thread_pool.submit(self._send_data, opts["block"], d_send, addr)
-
-    def _handle_data(self, msg, addr):
-        pass
 
     def _send_data(self, seqnum: int, data: bytes, addr: tuple):
         retries = 0
@@ -309,12 +306,40 @@ class SSFTPServer():
             pending_ack = self.connections[addr]["options"]["pending_ack"]
             if seqnum+1 < pending_ack:
                 break
+
             retries += 1
+            if retries <= MAX_RETRIES:
+                self.logger.info(f"No ack({seqnum+1}) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
 
         if retries > MAX_RETRIES:
-            print("Max retries reached. Should disconnect")
+            self.logger.info("Max retries reached. Should disconnect")
             # TODO: forceful disconnect
-            pass 
+            pass
+
+    def _handle_data(self, msg, addr):
+        seq_num = int.from_bytes(msg[2:4], 'big')
+
+        if seq_num != self.connections[addr]["options"]["block"]:
+            self.logger.info("Received out-of-order segment. Discarding.")
+
+        data = msg[4:-1]  # excluding the final 0 byte
+
+        # filename = self.connections[addr]["options"]["filename"]
+        # for testing purposes, we will use a different filename
+        filename = 'uploaded.out'
+
+        with open(filename, 'ab') as f:
+            f.write(data)
+
+        self.connections[addr]["options"]["block"] += 1
+        ack = ssftp.MSG_ACK(self.connections[addr]["options"]["block"])
+        self.connections[addr]["socket"].sendto(ack.encode(), addr)
+
+        # this marks the end of a transaction
+        if len(data) < self.connections[addr]["options"]["blksize"]:
+            self.connections[addr]["state"] = 0
+            self.connections[addr]["options"] = dict()
+            self.logger.info("End of file reached!")
 
     # =========================
     # Listener Functions
