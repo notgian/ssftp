@@ -239,7 +239,15 @@ class SSFTPServer():
         self.connections[addr]["options"]["blksize"] = blksize
         self.connections[addr]["options"]["timeout"] = timeout
         self.connections[addr]["options"]["tsize"] = tsize
+        self.connections[addr]["options"]["mode"] = mode
+        self.connections[addr]["options"]["op"] = opcode
         self.connections[addr]["options"]["block"] = 0
+
+    def _handle_ack(self, msg, addr):
+        pass
+
+    def _handle_data(self, msg, addr):
+        pass
 
     # =========================
     # Listener Functions
