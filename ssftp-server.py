@@ -5,6 +5,7 @@ from time import sleep
 
 import logging
 import sys
+import os
 
 MAX_CONNECTIONS = 1
 # Max data length is 2^16 so just adding a few bytes for good measure
@@ -12,6 +13,13 @@ MAX_MESSAGE_LENGTH = 2**16 + 2**8
 
 MESSAGE_TIMEOUT_MS = 500
 MESSAGE_READ_INTERVAL_MS = 20
+
+# MAX_BLKSIZE = 65464   # 2**16
+MAX_BLKSIZE = 4096    # 2**12
+# MAX_BLKSIZE = 512    # 2**8
+
+MAX_TIMEOUT_MS = 3000
+MIN_TIMEOUT_MS = 200
 
 ENABLE_LOGGING = True
 
@@ -43,29 +51,42 @@ class SSFTPServer():
     # MESSAGE HANDLING
     # =======================
 
-    def _message_mux(self, msg: bytes, addr: tuple):
-        opcode_bytes = msg[0:2]
+    def _message_mux(self, message: bytes, address: tuple):
+        opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
 
         if (opcode == ssftp.OPCODE.SYN.value.get_int()):
-            self._handle_syn(msg=msg, addr=addr)
+            self._handle_syn(message, address)
         # server should be SENDING, not receiving a SYNACK
         elif (opcode == ssftp.OPCODE.SYNACK.value.get_int()):
             pass
-        elif (opcode == ssftp.OPCODE.DWN.value.get_int()):
-            pass
+
+        # the following operations require an existing connection
+        if address not in self.connections:
+            self.logger.info(f"Received message from {address} who is not connected. Disregarding.")
+            return
+
+        if (opcode == ssftp.OPCODE.DWN.value.get_int()):
+            self._handle_dwn_upl(message, address)
         elif (opcode == ssftp.OPCODE.UPL.value.get_int()):
-            pass
+            self._handle_dwn_upl(message, address)
+
+        # server should be SENDING, not receiving an OACK
         elif (opcode == ssftp.OPCODE.OACK.value.get_int()):
             pass
+
+        # a server MAY receive an ERR message
         elif (opcode == ssftp.OPCODE.ERR.value.get_int()):
-            pass
+            self._handle_err(message, address)
+
         elif (opcode == ssftp.OPCODE.ACK.value.get_int()):
-            pass
+            self._handle_ack(message, address)
         elif (opcode == ssftp.OPCODE.DATA.value.get_int()):
-            pass
+            self._handle_data(message, address)
+
         elif (opcode == ssftp.OPCODE.FIN.value.get_int()):
-            pass
+            self._handle_fin(message, address)
+        # server should be SENDING, not receiving a FINACK
         elif (opcode == ssftp.OPCODE.FINACK.value.get_int()):
             pass
 
@@ -80,9 +101,6 @@ class SSFTPServer():
             self.logger.info("Max number of connections reached. Disregarding.")
             return
 
-        # add to connections and respond
-        self.connections[addr] = {"state": 0, "options": dict()}
-
         # create new connection socket
         conn_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         conn_sock.bind((self.ipv4addr, 0))
@@ -92,7 +110,136 @@ class SSFTPServer():
         self._listener_threads[addr] = new_connection_thread
         self._listener_threads[addr].start()
 
-        print(self.connections)
+        # add to connections and respond
+        self.connections[addr] = {"state": 0, "options": dict(), "socket": conn_sock}
+
+        synack = ssftp.MSG_SYNACK(conn_sock.getsockname()[1])
+        conn_sock.sendto(synack.encode(), addr)
+
+    def _handle_dwn_upl(self, msg: bytes, addr: tuple):
+        opcode = int.from_bytes(msg[0:2], 'big')
+        fp = 2  # start where opcode ends
+
+        filepath = ""
+        while True:
+            curr_char_b = msg[fp]
+            fp += 1
+
+            if curr_char_b == 0:
+                break
+            filepath += chr(curr_char_b)
+
+        mode = msg[fp]
+        fp += 1
+
+        opts = dict()
+
+        while fp < len(msg):
+            opt_name = ""
+            opt_val = ""
+
+            while True:
+                curr_char_b = msg[fp]
+                fp+=1
+
+                if curr_char_b == 0:
+                    break
+                opt_name += chr(curr_char_b)
+
+            while True:
+                curr_char_b = msg[fp]
+                fp+=1
+
+                if curr_char_b == 0:
+                    break
+                opt_val += chr(curr_char_b)
+
+            opts[opt_name] = opt_val
+
+        print("opcode: {} | filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
+
+        # Get opt values and validate. Clip to max and min values.
+
+        blksize = MAX_BLKSIZE
+        timeout = MIN_TIMEOUT_MS
+        tsize = None
+
+        if "blksize" in opts:
+            try:
+                opt_blksize = int(opts["blksize"])
+                blksize = min (opt_blksize, MAX_BLKSIZE)
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The blksize option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+        if "timeout" in opts:
+            try:
+                opt_timeout = int(opts["timeout"])
+                timeout = max(MIN_TIMEOUT_MS, min(opt_timeout, MAX_TIMEOUT_MS))
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The timeout option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+        if "tsize" in opts:
+            try:
+                opt_tsize = int(opts["tsize"])
+                tsize = opt_tsize
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The tsize option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+        if opcode == ssftp.OPCODE.DWN.value.get_int():
+            # check if the filepath is STRICTLY only a local filepath
+            # immediately deny if the start is a / or . or ..
+            # additoinally, ensure that there are no .. ANYWHERE to prevent
+            # certain circumventions like dir/../../..
+            filepath = filepath.strip()
+            if filepath.startswith('/') or filepath.startswith('.') or ".." in filepath:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.ACCESS_VIOLATION, "You are not permitted to access that file location.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+            # check if file exists
+            if not os.path.exists(filepath):
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.FILE_NOT_FOUND, "File does not exist.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+            tsize = os.path.getsize(filepath)
+
+            # all is good, send oack
+            oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
+            self.connections[addr]["socket"].sendto(oack.encode(), addr)
+
+        elif opcode == ssftp.OPCODE.UPL.value.get_int():
+            # check if tsize is included
+            if "tsize" not in opts:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "UPL request MUST include tsize option.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+            # check if disk space is sufficient
+            fs = os.statvfs('.')
+            block_size = fs.f_frsize
+            blocks_free = fs.f_bfree
+
+            free_bytes = block_size * blocks_free
+            if tsize > free_bytes:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.DISK_FULL, "UPL request cannot be fulfilled because disk space is insufficient.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+            # if all is good, send oack
+            oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
+            self.connections[addr]["socket"].sendto(oack.encode(), addr)
+
+        # set connection options
+        self.connections[addr]["state"] = 1
+        self.connections[addr]["options"]["blksize"] = blksize
+        self.connections[addr]["options"]["timeout"] = timeout
+        self.connections[addr]["options"]["tsize"] = tsize
+        self.connections[addr]["options"]["block"] = 0
 
     # =========================
     # Listener Functions
@@ -158,9 +305,6 @@ class SSFTPServer():
             except socket.error:
                 if MESSAGE_TIMEOUT_MS > 0:
                     sleep(1 / MESSAGE_TIMEOUT_MS)
-
-    def listen(self):
-        pass
 
     def close(self):
         self.new_conn_socket.close()

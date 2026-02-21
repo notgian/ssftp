@@ -19,13 +19,11 @@ import ssftp
 if __name__ == "__main__":
 
     sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    sock.bind(('', 30000))
+    sock.bind(('192.168.68.70', 30000))
 
     messages = {
 
             "syn": ssftp.MSG_SYN(),
-
-            "synack": ssftp.MSG_SYNACK(6767),
 
             "dwn1": ssftp.MSG_DWN('examplefile.png', ssftp.TRANSFER_MODES.netascii, ssftp.DEFAULT_BLKSIZE, ssftp.DEFAULT_TIMEOUT),
             "dwn2": ssftp.MSG_DWN('examplefile.png', ssftp.TRANSFER_MODES.octet, ssftp.DEFAULT_BLKSIZE, ssftp.DEFAULT_TIMEOUT),
@@ -46,9 +44,25 @@ if __name__ == "__main__":
             "finack": ssftp.MSG_FINACK()
     }
 
-    for message_name in messages:
+    # for message_name in messages:
+    #     print(f"sending {message_name}...")
+    #     sock.sendto(messages[message_name].encode(), ('192.168.68.70', ssftp.SERVER_LISTEN_PORT))
+
+    print(f"sending syn message...")
+    sock.sendto(messages["syn"].encode(), ('192.168.68.70', ssftp.SERVER_LISTEN_PORT))
+
+    synack = sock.recv(2048)
+    newport = int.from_bytes(synack[2:6], 'big')
+
+    for message_name in messages: 
+        if message_name == "syn":
+            continue
         print(f"sending {message_name}...")
-        sock.sendto(messages[message_name].encode(), ('127.0.0.1', ssftp.SERVER_LISTEN_PORT))
+        sock.sendto(messages[message_name].encode(), ('192.168.68.70', newport))
+
+        if "dwn" in message_name or "upl" in message_name:
+            oack = sock.recv(2048)
+            print(oack)
 
     sock.close()
 
