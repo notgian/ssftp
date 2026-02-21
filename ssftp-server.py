@@ -6,6 +6,7 @@ from time import sleep
 import logging
 import sys
 import os
+import re
 
 MAX_CONNECTIONS = 1
 # Max data length is 2^16 so just adding a few bytes for good measure
@@ -54,6 +55,7 @@ class SSFTPServer():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
+        print(f"opcode: {opcode}")
 
         if (opcode == ssftp.OPCODE.SYN.value.get_int()):
             self._handle_syn(message, address)
@@ -89,8 +91,6 @@ class SSFTPServer():
         # server should be SENDING, not receiving a FINACK
         elif (opcode == ssftp.OPCODE.FINACK.value.get_int()):
             pass
-
-        print(f"opcode: {opcode}")
 
     def _handle_syn(self, msg: bytes, addr: tuple):
         self.logger.info(f"Incoming connection from {addr}")
@@ -156,7 +156,7 @@ class SSFTPServer():
 
             opts[opt_name] = opt_val
 
-        print("opcode: {} | filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
+        self.logger.info("filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
 
         # Get opt values and validate. Clip to max and min values.
 
@@ -234,6 +234,10 @@ class SSFTPServer():
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
             self.connections[addr]["socket"].sendto(oack.encode(), addr)
 
+        # getting filename from filepath
+        pattern = r"(?<!\\)\/*[^\/]+$"
+        filename = re.search(pattern=pattern, string=filepath).group(0).lstrip('/')
+
         # set connection options
         self.connections[addr]["state"] = 1
         self.connections[addr]["options"]["blksize"] = blksize
@@ -242,9 +246,43 @@ class SSFTPServer():
         self.connections[addr]["options"]["mode"] = mode
         self.connections[addr]["options"]["op"] = opcode
         self.connections[addr]["options"]["block"] = 0
+        self.connections[addr]["options"]["filepath"] = filepath
+        self.connections[addr]["options"]["filename"] = filename
+        self.connections[addr]["options"]["data"] = bytes()
+        self.connections[addr]["options"]["terminating_block"] = False
 
     def _handle_ack(self, msg, addr):
-        pass
+        seqnum = int.from_bytes(msg[2:4], 'big')
+
+        # discard out-of-order segment
+        if self.connections[addr]["options"]["block"] != seqnum-1:
+            self.logger.info(f"Received out-of-order segment (seqnum={seqnum}) from {addr}. Discarding.")
+            return
+
+        # check if last block sent was a terminating block and reset state
+        # this marks the end of a transaction
+        if self.connections[addr]["options"]["terminating_block"]:
+            self.connections[addr]["state"] = 0
+            self.connections[addr]["options"] = dict()
+
+        # send next segment
+        else:
+            opts = self.connections[addr]["options"]
+
+            opts["block"] += 1
+            d_start = (opts["block"]-1) * opts["blksize"]
+
+            f = open(opts["filepath"], 'rb')
+            f.seek(d_start)
+            d_send = f.read(opts["blksize"])
+
+            # determine if current segment is terminating
+            if len(d_send) < opts["blksize"]:
+                opts["terminating_block"] = True
+                print("End of file reached!")
+
+            nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
+            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
 
     def _handle_data(self, msg, addr):
         pass

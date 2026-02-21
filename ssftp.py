@@ -153,13 +153,9 @@ class MSG_ACK(Message):
 
 
 class MSG_DATA(Message):
-    def __init__(self, seq_num: int, data: bytes | str, mode: TRANSFER_MODES):
+    def __init__(self, seq_num: int, data: bytes | str):
         self.seq_num = seq_num
-
-        if mode == TRANSFER_MODES.octet:
-            self.data = data
-        elif mode == TRANSFER_MODES.netascii:
-            self.data = data.encode('ascii')
+        self.data = data
 
     def encode(self):
         return OPCODE.DATA.value.get_bytes() + self.seq_num.to_bytes(2, 'big') + self.data + b'\x00'
