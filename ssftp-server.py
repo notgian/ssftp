@@ -92,6 +92,8 @@ class SSFTPServer():
         self._listener_threads[addr] = new_connection_thread
         self._listener_threads[addr].start()
 
+        print(self.connections)
+
     # =========================
     # Listener Functions
     # =========================
