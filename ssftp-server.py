@@ -3,14 +3,17 @@ import ssftp
 from threading import Thread
 from time import sleep
 
+import concurrent.futures
 import logging
 import sys
 import os
 import re
+import asyncio
 
 MAX_CONNECTIONS = 1
 # Max data length is 2^16 so just adding a few bytes for good measure
 MAX_MESSAGE_LENGTH = 2**16 + 2**8
+MAX_RETRIES = 10
 
 MESSAGE_TIMEOUT_MS = 500
 MESSAGE_READ_INTERVAL_MS = 20
@@ -47,6 +50,8 @@ class SSFTPServer():
         self.logger.setLevel(logging.INFO)
         self.logger.addHandler(handler)
         self.logger.disabled = False
+
+        self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONNECTIONS)
 
     # =======================
     # MESSAGE HANDLING
@@ -111,8 +116,8 @@ class SSFTPServer():
         self._listener_threads[addr].start()
 
         # add to connections and respond
-        self.connections[addr] = {"state": 0, "options": dict(), "socket": conn_sock}
-
+        self.connections[addr] = {"state": 0, "options": dict(), "socket": conn_sock, "sender_thread": Thread()}
+        
         synack = ssftp.MSG_SYNACK(conn_sock.getsockname()[1])
         conn_sock.sendto(synack.encode(), addr)
 
@@ -245,19 +250,23 @@ class SSFTPServer():
         self.connections[addr]["options"]["tsize"] = tsize
         self.connections[addr]["options"]["mode"] = mode
         self.connections[addr]["options"]["op"] = opcode
-        self.connections[addr]["options"]["block"] = 0
+        # Set to 0 when DWN, because we expect an initial ack from client first, and the ack handler will increment it before sending
+        initial_block = 0 if opcode == ssftp.OPCODE.DWN.value.get_int() else 1
+        self.connections[addr]["options"]["block"] = initial_block
         self.connections[addr]["options"]["filepath"] = filepath
         self.connections[addr]["options"]["filename"] = filename
         self.connections[addr]["options"]["data"] = bytes()
         self.connections[addr]["options"]["terminating_block"] = False
+        self.connections[addr]["options"]["pending_ack"] = initial_block + 1
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
-
         # discard out-of-order segment
         if self.connections[addr]["options"]["block"] != seqnum-1:
             self.logger.info(f"Received out-of-order segment (seqnum={seqnum}) from {addr}. Discarding.")
             return
+
+        self.connections[addr]["options"]["pending_ack"] += 1
 
         # check if last block sent was a terminating block and reset state
         # this marks the end of a transaction
@@ -281,11 +290,31 @@ class SSFTPServer():
                 opts["terminating_block"] = True
                 print("End of file reached!")
 
-            nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
-            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            # nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
+            # self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+
+            self.thread_pool.submit(self._send_data, opts["block"], d_send, addr)
 
     def _handle_data(self, msg, addr):
         pass
+
+    def _send_data(self, seqnum: int, data: bytes, addr: tuple):
+        retries = 0
+        timeout = self.connections[addr]["options"]["timeout"]
+
+        while retries <= MAX_RETRIES:
+            nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
+            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            sleep(timeout/1000)
+            pending_ack = self.connections[addr]["options"]["pending_ack"]
+            if seqnum+1 < pending_ack:
+                break
+            retries += 1
+
+        if retries > MAX_RETRIES:
+            print("Max retries reached. Should disconnect")
+            # TODO: forceful disconnect
+            pass 
 
     # =========================
     # Listener Functions

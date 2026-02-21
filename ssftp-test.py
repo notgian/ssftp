@@ -1,6 +1,7 @@
 import socket
 import ssftp
 import os
+import time
 
 
 # def get_my_ip():
@@ -55,8 +56,8 @@ if __name__ == "__main__":
     synack = sock.recv(2048)
     newport = int.from_bytes(synack[2:6], 'big')
 
-    upl = ssftp.MSG_UPL('example.out', ssftp.TRANSFER_MODES.octet, os.path.getsize('example.out'), ssftp.DEFAULT_BLKSIZE, ssftp.DEFAULT_TIMEOUT)
-    sock.sendto(upl.encode(), ('192.168.68.70', newport))
+    dwn = ssftp.MSG_DWN('example.out', ssftp.TRANSFER_MODES.octet, ssftp.DEFAULT_BLKSIZE, ssftp.DEFAULT_TIMEOUT)
+    sock.sendto(dwn.encode(), ('192.168.68.70', newport))
 
     oack = sock.recv(2048)
     print(oack)
@@ -100,6 +101,8 @@ if __name__ == "__main__":
     data1 = sock.recv(2048)
     print(data1)
 
+    time.sleep(2)
+
     ack2 = ssftp.MSG_ACK(2)
     print("sending ack 2")
     sock.sendto(ack2.encode(), ('192.168.68.70', newport))
@@ -107,12 +110,13 @@ if __name__ == "__main__":
     data2 = sock.recv(2048)
     print(data2)
 
-    ack3 = ssftp.MSG_ACK(3)
-    print("sending ack 3")
-    sock.sendto(ack3.encode(), ('192.168.68.70', newport))
+    # ack3 = ssftp.MSG_ACK(3)
+    # print("sending ack 3")
+    # sock.sendto(ack3.encode(), ('192.168.68.70', newport))
+    #
+    # data3 = sock.recv(2048)
+    # print(data3)
 
-    data3 = sock.recv(2048)
-    print(data3)
     # for message_name in messages: 
     #     if message_name == "syn":
     #         continue
