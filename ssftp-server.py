@@ -343,6 +343,24 @@ class SSFTPServer():
             self.connections[addr]["options"] = dict()
             self.logger.info("End of file reached!")
 
+    def _handle_fin(self, msg, addr):
+        # check if connection has an ongoing transaction. If upl, delete the file.
+        if self.connections[addr]["state"] == 1:
+            if self.connections[addr]["options"]["op"] == ssftp.OPCODE.UPL.value.get_int():
+                self.logger.info("FIN messsage from {addr} is interrupting an upload. Aborting upload!")
+                upl_filename = self.connections[addr]["options"]["filename"]
+                os.remove(upl_filename)
+
+        # disconnect
+        del self.connections[addr]
+        del self._listener_threads[addr]
+
+        exit_code = int.from_bytes(msg[2:4], 'big')
+        self.logger.info(f"Closed connection to {addr} with exit code {exit_code}")
+
+    def _handle_finack(self, msg, addr):
+        pass
+
     # =========================
     # Listener Functions
     # =========================
@@ -355,6 +373,10 @@ class SSFTPServer():
         while self.new_conn_socket is not None:
             try:
                 data, addr = self.new_conn_socket.recvfrom(4)
+                opcode = int.from_bytes(data[:2], 'big')
+                # skip non syn messages
+                if opcode != ssftp.OPCODE.SYN.value.get_int():
+                    continue
                 self._message_mux(data, addr)
                 if MESSAGE_READ_INTERVAL_MS > 0:
                     sleep(1 / MESSAGE_READ_INTERVAL_MS)
@@ -395,7 +417,7 @@ class SSFTPServer():
         # using the new_conn_socket as a condition
         if self.new_conn_socket is None:
             return False
-        while target_addr in self._listener_threads.keys():
+        while target_addr in self._listener_threads:
             try:
                 data, addr = conn_socket.recvfrom(MAX_MESSAGE_LENGTH)
                 if addr != target_addr:
@@ -407,6 +429,7 @@ class SSFTPServer():
             except socket.error:
                 if MESSAGE_TIMEOUT_MS > 0:
                     sleep(1 / MESSAGE_TIMEOUT_MS)
+        self.logger.info(f"Listener for {target_addr} stopped.")
 
     def close(self):
         self.new_conn_socket.close()
