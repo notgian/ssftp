@@ -326,9 +326,9 @@ class SSFTPServer():
         data = msg[4:-1]  # excluding the final 0 byte
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
-        # filename = self.connections[addr]["options"]["filename"]
+        filename = self.connections[addr]["options"]["filename"]
         # for testing purposes, we will use a different filename
-        filename = 'uploaded.out'
+        # filename = 'uploaded.out'
 
         with open(filename, 'ab') as f:
             f.write(data)
