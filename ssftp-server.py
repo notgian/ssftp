@@ -133,32 +133,27 @@ class SSFTPServer():
             if curr_char_b == 0:
                 break
             filepath += chr(curr_char_b)
+        filepath = filepath.strip()
 
         mode = msg[fp]
         fp += 1
 
         opts = dict()
-
         while fp < len(msg):
             opt_name = ""
             opt_val = ""
-
             while True:
                 curr_char_b = msg[fp]
                 fp+=1
-
                 if curr_char_b == 0:
                     break
                 opt_name += chr(curr_char_b)
-
             while True:
                 curr_char_b = msg[fp]
                 fp+=1
-
                 if curr_char_b == 0:
                     break
                 opt_val += chr(curr_char_b)
-
             opts[opt_name] = opt_val
 
         self.logger.info("filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
@@ -194,12 +189,15 @@ class SSFTPServer():
                 self.connections[addr]["socket"].sendto(err.encode(), addr)
                 return
 
+        # getting filename from filepath
+        pattern = r"(?<!\\)\/*[^\/]+$"
+        filename = re.search(pattern=pattern, string=filepath).group(0).lstrip('/')
+
         if opcode == ssftp.OPCODE.DWN.value.get_int():
             # check if the filepath is STRICTLY only a local filepath
             # immediately deny if the start is a / or . or ..
             # additoinally, ensure that there are no .. ANYWHERE to prevent
             # certain circumventions like dir/../../..
-            filepath = filepath.strip()
             if filepath.startswith('/') or filepath.startswith('.') or ".." in filepath:
                 err = ssftp.MSG_ERR(ssftp.ERRCODE.ACCESS_VIOLATION, "You are not permitted to access that file location.")
                 self.connections[addr]["socket"].sendto(err.encode(), addr)
@@ -224,6 +222,13 @@ class SSFTPServer():
                 self.connections[addr]["socket"].sendto(err.encode(), addr)
                 return
 
+            # check if file already exists
+            # print(self.connections[addr]["options"])
+            if os.path.exists(filename):
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.FILE_EXISTS, "File to be uploaded already exists.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
             # check if disk space is sufficient
             fs = os.statvfs('.')
             block_size = fs.f_frsize
@@ -238,10 +243,6 @@ class SSFTPServer():
             # if all is good, send oack
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
             self.connections[addr]["socket"].sendto(oack.encode(), addr)
-
-        # getting filename from filepath
-        pattern = r"(?<!\\)\/*[^\/]+$"
-        filename = re.search(pattern=pattern, string=filepath).group(0).lstrip('/')
 
         # set connection options
         self.connections[addr]["state"] = 1
@@ -324,6 +325,7 @@ class SSFTPServer():
 
         data = msg[4:-1]  # excluding the final 0 byte
 
+        # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
         # filename = self.connections[addr]["options"]["filename"]
         # for testing purposes, we will use a different filename
         filename = 'uploaded.out'
