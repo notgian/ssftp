@@ -111,6 +111,7 @@ class SSFTPServer():
             pass
 
     def _handle_syn(self, msg: bytes, addr: tuple):
+        self.logger.info(f"SYN from {addr}")
         self.logger.info(f"Incoming connection from {addr}")
         if addr in self.connections:
             self.logger.info(f"{addr} already in connections. Disregarding.")
@@ -138,6 +139,12 @@ class SSFTPServer():
 
     def _handle_dwn_upl(self, msg: bytes, addr: tuple):
         opcode = int.from_bytes(msg[0:2], 'big')
+
+        if opcode == ssftp.OPCODE.DWN.value.get_int():
+            self.logger.info(f"DWN from {addr}")
+        elif opcode == ssftp.OPCODE.UPL.value.get_int():
+            self.logger.info(f"UPL from {addr}")
+
         fp = 2  # start where opcode ends
 
         filepath = ""
@@ -171,7 +178,9 @@ class SSFTPServer():
                 opt_val += chr(curr_char_b)
             opts[opt_name] = opt_val
 
-        self.logger.info("filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
+        print(opts)
+
+        self.logger.info("Parsed options => filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
 
         # Get opt values and validate. Clip to max and min values.
 
@@ -257,6 +266,7 @@ class SSFTPServer():
 
             # if all is good, send oack
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
+            self.logger.info(f"Sending OACK to {addr} tsize={tsize} blksize={blksize} timeout={timeout}")
             self.connections[addr]["socket"].sendto(oack.encode(), addr)
 
         # set connection options
@@ -276,6 +286,7 @@ class SSFTPServer():
         self.connections[addr]["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
 
     def _handle_err(self, msg, addr):
+        self.logger.info(f"ERR from {addr}")
         err_code = int.from_bytes(msg[2:3], 'big')
 
         fp = 3
@@ -292,6 +303,8 @@ class SSFTPServer():
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
+        self.logger.info(f"ACK from {addr} (seq_num={seqnum})")
+
         # discard out-of-order segment
         if self.connections[addr]["options"]["block"] != seqnum-1:
             self.logger.info(f"Received out-of-order segment (seqnum={seqnum}) from {addr}. Discarding.")
@@ -324,9 +337,11 @@ class SSFTPServer():
             # nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
             # self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
 
+            self.logger.info(f"Sending next segment to {addr} (seq_num={opts['block']} len={len(d_send)})")
             self.thread_pool.submit(self._send_data, opts["block"], d_send, addr)
 
     def _send_data(self, seqnum: int, data: bytes, addr: tuple):
+        self.logger.info(f"Sending data to {addr} (seq_num={seqnum} len={len(data)})")
         retries = 0
         timeout = self.connections[addr]["options"]["timeout"]
 
@@ -351,11 +366,13 @@ class SSFTPServer():
 
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
+        data = msg[4:-1]  # excluding the final 0 byte
+
+        self.logger.info(f"DATA from {addr} (seq_num={seq_num} len={len(data)})")
 
         if seq_num != self.connections[addr]["options"]["block"]:
             self.logger.info("Received out-of-order segment. Discarding.")
 
-        data = msg[4:-1]  # excluding the final 0 byte
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
         filename = self.connections[addr]["options"]["filename"]
@@ -376,6 +393,8 @@ class SSFTPServer():
             self.logger.info("End of file reached!")
 
     def _handle_fin(self, msg, addr):
+        exit_code = int.from_bytes(msg[2:4], 'big')
+        self.logger.info(f"FIN from {addr} (exit_code={exit_code})")
         # check if connection has an ongoing transaction. If upl, delete the file.
         if self.connections[addr]["state"] == 1:
             if self.connections[addr]["options"]["op"] == ssftp.OPCODE.UPL.value.get_int():

@@ -113,6 +113,8 @@ class SSFTPClient():
             self._handle_finack(message, address)
 
     def _handle_synack(self, msg: bytes, addr: tuple):
+        self.logger.info(f"SYNACK from {addr}")
+
         if self.connection['addr'] == addr:
             self.logger.info(f"Already connected to {addr}. Disregarding.")
             return
@@ -135,6 +137,7 @@ class SSFTPClient():
         self.logger.info(f"Connected to server {newaddr}")
 
     def _handle_err(self, msg, addr):
+        self.logger.info(f"ERR from {addr}")
         err_code = int.from_bytes(msg[2:3], 'big')
 
         fp = 3
@@ -150,6 +153,7 @@ class SSFTPClient():
         self.logger.info(f"Received error (code {err_code}) from {addr}. {err_msg}")
 
     def _handle_oack(self, msg, addr):
+        self.logger.info(f"OACK from {addr}")
         # parse options
         fp = 2  # start where opcode ends
 
@@ -200,6 +204,8 @@ class SSFTPClient():
                 self.socket.sendto(err.encode(), addr)
                 return
 
+        self.logger.info(f"OACK options set: blksize={blksize} timeout={timeout} tsize={tsize}")
+
         mode = self.connection['temp_opts']['mode']
         opcode = self.connection['temp_opts']['op']
         filepath = self.connection['temp_opts']['filepath']
@@ -214,8 +220,8 @@ class SSFTPClient():
         self.connection["options"]["tsize"] = tsize
         self.connection["options"]["mode"] = mode
         self.connection["options"]["op"] = opcode
-        # Set to 0 when DWN, because we expect an initial ack from client first, and the ack handler will increment it before sending
-        initial_block = 0 if opcode == ssftp.OPCODE.DWN.value.get_int() else 1
+        # Set to 1 when DWN, because client sends an initial ack first, and the ack handler will in
+        initial_block = 1 if opcode == ssftp.OPCODE.DWN.value.get_int() else 0
         self.connection["options"]["block"] = initial_block
         self.connection["options"]["filepath"] = filepath
         self.connection["options"]["filename"] = filename
@@ -225,11 +231,13 @@ class SSFTPClient():
 
         # send an ack to receive block 1
         if opcode == ssftp.OPCODE.DWN.value.get_int():
+            self.logger.info(f"Sending ack to {self.connection['addr']} to receive first block.")
             ack1 = ssftp.MSG_ACK(1)
             self.socket.sendto(ack1.encode(), self.connection['addr'])
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
+        self.logger.info(f"ACK from {addr} (seq_num=2)")
         # discard out-of-order segment
         if self.connection["options"]["block"] != seqnum-1:
             self.logger.info(f"Received out-of-order segment (seqnum={seqnum}) from {addr}. Discarding.")
@@ -265,6 +273,7 @@ class SSFTPClient():
             self.thread_pool.submit(self._send_data, opts["block"], d_send, addr)
 
     def _send_data(self, seqnum: int, data: bytes, addr: tuple):
+        self.logger(f"Sending data to {addr} (seq_num={seqnum} len={len(data)})")
         retries = 0
         timeout = self.connection["options"]["timeout"]
 
@@ -289,11 +298,12 @@ class SSFTPClient():
 
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
+        data = msg[4:-1]  # excluding the final 0 byte
+
+        self.logger.info(f"DATA from {addr} (seq_num={seq_num} len={len(data)})")
 
         if seq_num != self.connection["options"]["block"]:
             self.logger.info("Received out-of-order segment. Discarding.")
-
-        data = msg[4:-1]  # excluding the final 0 byte
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
         filename = self.connection["options"]["filename"]
@@ -314,6 +324,7 @@ class SSFTPClient():
             self.logger.info("End of file reached!")
 
     def _handle_fin(self, msg, addr):
+        self.logger.info(f"FIN from {addr}")
         # check if connection has an ongoing transaction. If upl, delete the file.
         if self.connection["state"] == 1:
             if self.connection["options"]["op"] == ssftp.OPCODE.UPL.value.get_int():
