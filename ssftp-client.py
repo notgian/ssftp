@@ -21,6 +21,9 @@ MESSAGE_READ_INTERVAL_MS = 20
 MAX_BLKSIZE = 4096    # 2**12
 # MAX_BLKSIZE = 512    # 2**8
 
+CLIENT_BLKSIZE = 512
+CLIENT_TIMEOUT = 500
+
 MAX_TIMEOUT_MS = 3000
 MIN_TIMEOUT_MS = 200
 
@@ -31,8 +34,13 @@ class SSFTPClient():
     def __init__(self):
         # dict of connection containing states and options
         # two possible states: 0 - idle, 1 - smth's happening aka data transfer
-        #   _server_address: { state: 0|1,  options: {opts:here,} }
-        self.connection = dict()
+        # {addr: server_address, state: 0|1,  options: {opts:here,} }
+        self.connection = {
+                'addr': None,
+                'state': None,  # 0 | 1
+                'options': {}
+        }
+
         self.ipv4addr = None
 
         self.socket = socket.socket(type=socket.AF_INET, family=socket.SOCK_DGRAM)
@@ -54,13 +62,13 @@ class SSFTPClient():
         # This exit handler will allow us to send a fin to the server
         # before dying in the case a SIGINT is sent to the program
         def exit_handler(signum, frame):
-            if len(self.connection) > 0:
-                addr = self.connection.keys()[0]
+            if self.connection['addr'] is not None:
+                addr = self.connection['addr']
                 self.logger.info(f"Forceful termination of program. Disconnecting from {addr}")
                 exitcode = ssftp.EXITCODE.FORCEFUL_TERMINATION
                 fin = ssftp.MSG_FIN(exitcode)
                 self.socket.sendto(fin.encode(), addr)
-                self.disconnect(addr=addr, exit_code=exitcode)
+                self.disconnect(exit_code=exitcode)
             exit(0)
         signal.signal(signal.SIGINT, exit_handler)
 
@@ -71,7 +79,6 @@ class SSFTPClient():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
-        print(f"opcode: {opcode}")
 
         # server should be SENDING, not receiving a SYNACK
         if (opcode == ssftp.OPCODE.SYNACK.value.get_int()):
@@ -79,8 +86,11 @@ class SSFTPClient():
             return
 
         # the following operations require an existing connection
-        if address not in self.connection:
-            self.logger.info(f"Received message from {address} who is not server. Disregarding.")
+        if self.connection['addr'] is None:
+            self.logger.info(f"No existing connection. Disregarding message from {address}.")
+            return
+        elif self.connection['addr'] != address:
+            self.logger.info(f"Received message from {address} who is not the server. Disregarding.")
             return
 
         # server should be SENDING, not receiving an OACK
@@ -102,15 +112,14 @@ class SSFTPClient():
             self._handle_finack(message, address)
 
     def _handle_synack(self, msg: bytes, addr: tuple):
-        if addr in self.connection:
+        if self.connection['addr'] == addr:
             self.logger.info(f"Already connected to {addr}. Disregarding.")
             return
-        elif len(self.connection) > 0:
+        elif self.connection['addr'] is not None:
             self.logger.info(f"Already connected to a server. Disregarding {addr}.")
             return
 
         ipaddr = addr[0]
-        print(msg)
         newport = int.from_bytes(msg[2:6], 'big')
         newaddr = (ipaddr, newport)
 
@@ -118,9 +127,11 @@ class SSFTPClient():
         connection_thread = Thread(target=lambda: self._listener(newaddr))
         self._listener_thread = connection_thread
         self._listener_thread.start()
-        self.connection[newaddr] = {"state": 0, "options": dict()}
+        self.connection['addr'] = addr
+        self.connection['state'] = 0
+        self.connection['options']: dict()
 
-        self.logger.info(self.connection)
+        self.logger.info(f"Connected to server {newaddr}")
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
@@ -275,10 +286,10 @@ class SSFTPClient():
     # target addr used to check in while loop to ensure the conneciton is
     # still alive
     def _listener(self, target_addr):
-        if len(self.connection) == 0:
+        if self.connection['addr'] is None:
             return False
 
-        while len(self.connection) > 0:
+        while self.connection['addr'] is not None:
             try:
                 data, addr = self.socket.recvfrom(MAX_MESSAGE_LENGTH)
                 if addr != target_addr:
@@ -292,8 +303,12 @@ class SSFTPClient():
                     sleep(1 / MESSAGE_TIMEOUT_MS)
         self.logger.info(f"Listener for {target_addr} stopped.")
 
+    # =======================
+    #    Client operations
+    # =======================
+
     def connect_to(self, addr: tuple):
-        if len(self.connection) > 1:
+        if self.connection['addr'] is not None:
             self.logger.info(f"Connect failed! Already connected to {addr}.")
             return
 
@@ -304,10 +319,30 @@ class SSFTPClient():
         msg, retaddr = self.socket.recvfrom(MAX_MESSAGE_LENGTH)
         self._message_mux(msg, retaddr)
 
-    def disconnect(self, addr: tuple, exit_code: ssftp.EXITCODE):
-        del self.connection[addr]
+    def send_dwn(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
+        dwn = ssftp.MSG_DWN(
+                filepath=filepath,
+                mode=ssftp.TRANSFER_MODES,
+                blksize=CLIENT_BLKSIZE,
+                timeout=CLIENT_TIMEOUT
+        )
+
+        self.socket.sendto(dwn.encode(), self.connection['addr'])
+
+    # This method does not account for file
+    # existing or not existing. Please ensure to
+    # check this is creating the operations for the client.
+    def send_upl(self, filename: str):
+        pass
+
+    def disconnect(self, exit_code: ssftp.EXITCODE):
+        server_addr = self.connection['addr']
+        self.connection['addr'] = None
+        self.connection['state'] = None
+        self.connection['options'] = dict()
+
         self._listener_thread = None
-        self.logger.info(f"Closed connection to {addr} with exit code {exit_code}")
+        self.logger.info(f"Closed connection to server {server_addr} with exit code {exit_code.value.get_int()}")
 
     def close(self):
         self.new_conn_socket.close()

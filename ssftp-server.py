@@ -29,7 +29,7 @@ ENABLE_LOGGING = True
 
 
 class SSFTPServer():
-    def __init__(self):
+    def __init__(self, logger_stream=sys.stdout):
         self.max_connections = MAX_CONNECTIONS
         # dict containing connections, states, and options for each one
         # two possible states: 0 - idle, 1 - smth's happening aka data transfer
@@ -43,7 +43,7 @@ class SSFTPServer():
         # on a new connection, a listener thread is created.
         self._listener_threads = dict()
 
-        handler = logging.StreamHandler(sys.stdout)
+        handler = logging.StreamHandler(logger_stream)
         handler.setLevel(logging.INFO)
 
         self.logger = logging.getLogger()
@@ -73,7 +73,6 @@ class SSFTPServer():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
-        print(f"opcode: {opcode}")
 
         if (opcode == ssftp.OPCODE.SYN.value.get_int()):
             self._handle_syn(message, address)
@@ -133,6 +132,8 @@ class SSFTPServer():
 
         synack = ssftp.MSG_SYNACK(conn_sock.getsockname()[1])
         conn_sock.sendto(synack.encode(), addr)
+
+        self.logger.info(f"Connected to {addr}")
 
     def _handle_dwn_upl(self, msg: bytes, addr: tuple):
         opcode = int.from_bytes(msg[0:2], 'big')
@@ -460,5 +461,5 @@ if __name__ == "__main__":
     ssftpserver.new_conn_listen()
     sockname = ssftpserver.new_conn_socket.getsockname()
 
-    while True:
+    while True: 
         pass
