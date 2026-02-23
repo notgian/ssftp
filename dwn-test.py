@@ -91,4 +91,10 @@ if __name__ == "__main__":
     data2 = sock.recv(2048)
     print(data2)
 
+    time.sleep(8)
+
+    ack2 = ssftp.MSG_ACK(2)
+    print("sending ack 2")
+    sock.sendto(ack2.encode(), ('192.168.68.70', newport))
+
     sock.close()

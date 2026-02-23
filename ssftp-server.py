@@ -111,13 +111,13 @@ class SSFTPServer():
         conn_sock.bind((self.ipv4addr, 0))
         conn_sock.setblocking(False)
 
-        new_connection_thread = Thread(target=lambda: self._listener(addr, conn_sock))
+        new_connection_thread = Thread(target=lambda: self._listener(addr, conn_sock), daemon=True)
         self._listener_threads[addr] = new_connection_thread
         self._listener_threads[addr].start()
 
         # add to connections and respond
-        self.connections[addr] = {"state": 0, "options": dict(), "socket": conn_sock, "sender_thread": Thread()}
-        
+        self.connections[addr] = {"state": 0, "options": dict(), "socket": conn_sock}
+
         synack = ssftp.MSG_SYNACK(conn_sock.getsockname()[1])
         conn_sock.sendto(synack.encode(), addr)
 
@@ -313,9 +313,8 @@ class SSFTPServer():
                 self.logger.info(f"No ack({seqnum+1}) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
 
         if retries > MAX_RETRIES:
-            self.logger.info("Max retries reached. Should disconnect")
-            # TODO: forceful disconnect
-            pass
+            self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
+            self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
@@ -352,11 +351,8 @@ class SSFTPServer():
                 os.remove(upl_filename)
 
         # disconnect
-        del self.connections[addr]
-        del self._listener_threads[addr]
-
         exit_code = int.from_bytes(msg[2:4], 'big')
-        self.logger.info(f"Closed connection to {addr} with exit code {exit_code}")
+        self.disconnect(addr=addr, exit_code=exit_code)
 
     def _handle_finack(self, msg, addr):
         pass
@@ -406,7 +402,7 @@ class SSFTPServer():
         self.new_conn_socket.bind((self.ipv4addr, ssftp.SERVER_LISTEN_PORT))
         self.new_conn_socket.setblocking(False)
 
-        self._new_conn_listener_thread = Thread(target=self._new_conn_listener)
+        self._new_conn_listener_thread = Thread(target=self._new_conn_listener, daemon=True)
         self._new_conn_listener_thread.start()
 
     # listens for messages on a specific socket assocaited with a connection
@@ -430,6 +426,11 @@ class SSFTPServer():
                 if MESSAGE_TIMEOUT_MS > 0:
                     sleep(1 / MESSAGE_TIMEOUT_MS)
         self.logger.info(f"Listener for {target_addr} stopped.")
+
+    def disconnect(self, addr: tuple, exit_code: ssftp.EXITCODE):
+        del self.connections[addr]
+        del self._listener_threads[addr]
+        self.logger.info(f"Closed connection to {addr} with exit code {exit_code}")
 
     def close(self):
         self.new_conn_socket.close()
