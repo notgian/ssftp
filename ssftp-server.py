@@ -8,7 +8,7 @@ import logging
 import sys
 import os
 import re
-import asyncio
+import signal
 
 MAX_CONNECTIONS = 1
 # Max data length is 2^16 so just adding a few bytes for good measure
@@ -52,6 +52,19 @@ class SSFTPServer():
         self.logger.disabled = False
 
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONNECTIONS)
+
+        # This exit handler will allow us to send a fin to the client(s)
+        # before dying in the case a SIGINT is sent to the program
+        def exit_handler(signum, frame):
+            connection_addrs = [addr for addr in self.connections]
+            for addr in connection_addrs:
+                self.logger.info(f"Forceful termination of program. Disconnecting from {addr}")
+                exitcode = ssftp.EXITCODE.FORCEFUL_TERMINATION
+                fin = ssftp.MSG_FIN(exitcode)
+                self.connections[addr]["socket"].sendto(fin.encode(), addr)
+                self.disconnect(addr=addr, exit_code=exitcode)
+            exit(0)
+        signal.signal(signal.SIGINT, exit_handler)
 
     # =======================
     # MESSAGE HANDLING
@@ -111,7 +124,7 @@ class SSFTPServer():
         conn_sock.bind((self.ipv4addr, 0))
         conn_sock.setblocking(False)
 
-        new_connection_thread = Thread(target=lambda: self._listener(addr, conn_sock), daemon=True)
+        new_connection_thread = Thread(target=lambda: self._listener(addr, conn_sock))
         self._listener_threads[addr] = new_connection_thread
         self._listener_threads[addr].start()
 
@@ -314,6 +327,9 @@ class SSFTPServer():
 
         if retries > MAX_RETRIES:
             self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
+            fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
+            self.connections[addr]["socket"].sendto(fin.encode(), addr)
+
             self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
     def _handle_data(self, msg, addr):
