@@ -290,7 +290,6 @@ class SSFTPServer():
 
         self.logger.info(f"Received error (code {err_code}) from {addr}. {err_msg}")
 
-
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
         # discard out-of-order segment

@@ -133,6 +133,21 @@ class SSFTPClient():
 
         self.logger.info(f"Connected to server {newaddr}")
 
+    def _handle_err(self, msg, addr):
+        err_code = int.from_bytes(msg[2:3], 'big')
+
+        fp = 3
+        err_msg = ""
+        while True:
+            curr_char_b = msg[fp]
+            fp += 1
+
+            if curr_char_b == 0:
+                break
+            err_msg += chr(curr_char_b)
+
+        self.logger.info(f"Received error (code {err_code}) from {addr}. {err_msg}")
+
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
         # discard out-of-order segment
