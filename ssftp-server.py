@@ -73,6 +73,7 @@ class SSFTPServer():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
+        print(f"opcode: {opcode}")
 
         if (opcode == ssftp.OPCODE.SYN.value.get_int()):
             self._handle_syn(message, address)
@@ -273,6 +274,22 @@ class SSFTPServer():
         self.connections[addr]["options"]["data"] = bytes()
         self.connections[addr]["options"]["terminating_block"] = False
         self.connections[addr]["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
+
+    def _handle_err(self, msg, addr):
+        err_code = int.from_bytes(msg[2:3], 'big')
+
+        fp = 3
+        err_msg = ""
+        while True:
+            curr_char_b = msg[fp]
+            fp += 1
+
+            if curr_char_b == 0:
+                break
+            err_msg += chr(curr_char_b)
+
+        self.logger.info(f"Received error (code {err_code}) from {addr}. {err_msg}")
+
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')

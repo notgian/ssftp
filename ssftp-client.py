@@ -237,54 +237,6 @@ class SSFTPClient():
     # Listener Functions
     # =========================
 
-    # Thread for listening for NEW connections
-    def _new_conn_listener(self):
-        if self.new_conn_socket is None:
-            return False
-
-        while self.new_conn_socket is not None:
-            try:
-                data, addr = self.new_conn_socket.recvfrom(4)
-                opcode = int.from_bytes(data[:2], 'big')
-                # skip non syn messages
-                if opcode != ssftp.OPCODE.SYN.value.get_int():
-                    continue
-                self._message_mux(data, addr)
-                if MESSAGE_READ_INTERVAL_MS > 0:
-                    sleep(1 / MESSAGE_READ_INTERVAL_MS)
-            except socket.error:
-                if MESSAGE_TIMEOUT_MS > 0:
-                    sleep(1 / MESSAGE_TIMEOUT_MS)
-
-    # Starts listening for NEW connections.
-    def new_conn_listen(self):
-        if self.new_conn_socket is not None or self._new_conn_listener_thread is not None:
-            return
-
-        # getting ip
-        if self.ipv4addr is None:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-            try:
-                s.connect(('10.255.255.255', 1))
-                self.ipv4addr = s.getsockname()[0]
-            except Exception:
-                self.ipv4addr = '127.0.0.1'
-            finally:
-                s.close()
-
-        # socket creation and binding
-        self.new_conn_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-        self.new_conn_socket.bind((self.ipv4addr, ssftp.SERVER_LISTEN_PORT))
-        self.new_conn_socket.setblocking(False)
-
-        self._new_conn_listener_thread = Thread(target=self._new_conn_listener, daemon=True)
-        self._new_conn_listener_thread.start()
-
-    # listens for messages on a specific socket assocaited with a connection
-    # used as the target method for new connections.
-    # target addr used to check in while loop to ensure the conneciton is
-    # still alive
     def _listener(self, target_addr):
         if self.connection['addr'] is None:
             return False
