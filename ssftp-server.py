@@ -180,7 +180,7 @@ class SSFTPServer():
 
         print(opts)
 
-        self.logger.info("Parsed options => filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
+        self.logger.info("Parsed options => opdcode: {} filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
 
         # Get opt values and validate. Clip to max and min values.
 
@@ -250,6 +250,7 @@ class SSFTPServer():
             # print(self.connections[addr]["options"])
             if os.path.exists(filename):
                 err = ssftp.MSG_ERR(ssftp.ERRCODE.FILE_EXISTS, "File to be uploaded already exists.")
+                self.logger.info("Cannot fulfill UPL request. File to be uploaded alreadt exists.")
                 self.connections[addr]["socket"].sendto(err.encode(), addr)
                 return
 
@@ -261,6 +262,7 @@ class SSFTPServer():
             free_bytes = block_size * blocks_free
             if tsize > free_bytes:
                 err = ssftp.MSG_ERR(ssftp.ERRCODE.DISK_FULL, "UPL request cannot be fulfilled because disk space is insufficient.")
+                self.logger.info("Cannot fulfill UPL request. Disk space is insufficient.")
                 self.connections[addr]["socket"].sendto(err.encode(), addr)
                 return
 
@@ -284,6 +286,7 @@ class SSFTPServer():
         self.connections[addr]["options"]["data"] = bytes()
         self.connections[addr]["options"]["terminating_block"] = False
         self.connections[addr]["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
+
 
     def _handle_err(self, msg, addr):
         self.logger.info(f"ERR from {addr}")
@@ -317,6 +320,7 @@ class SSFTPServer():
         if self.connections[addr]["options"]["terminating_block"]:
             self.connections[addr]["state"] = 0
             self.connections[addr]["options"] = dict()
+            return
 
         # send next segment
         else:
@@ -368,10 +372,13 @@ class SSFTPServer():
         seq_num = int.from_bytes(msg[2:4], 'big')
         data = msg[4:-1]  # excluding the final 0 byte
 
+        print(self.connections[addr]["options"]["block"])
+
         self.logger.info(f"DATA from {addr} (seq_num={seq_num} len={len(data)})")
 
         if seq_num != self.connections[addr]["options"]["block"]:
-            self.logger.info("Received out-of-order segment. Discarding.")
+            self.logger.info(f"Received out-of-order segment. Expected {self.connections[addr]['options']['block']} Discarding.")
+            return
 
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
@@ -384,6 +391,7 @@ class SSFTPServer():
 
         self.connections[addr]["options"]["block"] += 1
         ack = ssftp.MSG_ACK(self.connections[addr]["options"]["block"])
+        self.logger.info(f"Sending ACK to {addr} (seq_num={self.connections[addr]["options"]["block"]})")
         self.connections[addr]["socket"].sendto(ack.encode(), addr)
 
         # this marks the end of a transaction

@@ -221,7 +221,7 @@ class SSFTPClient():
         self.connection["options"]["mode"] = mode
         self.connection["options"]["op"] = opcode
         # Set to 1 when DWN, because client sends an initial ack first, and the ack handler will in
-        initial_block = 1 if opcode == ssftp.OPCODE.DWN.value.get_int() else 0
+        initial_block = 1
         self.connection["options"]["block"] = initial_block
         self.connection["options"]["filepath"] = filepath
         self.connection["options"]["filename"] = filename
@@ -234,10 +234,21 @@ class SSFTPClient():
             self.logger.info(f"Sending ack to {self.connection['addr']} to receive first block.")
             ack1 = ssftp.MSG_ACK(1)
             self.socket.sendto(ack1.encode(), self.connection['addr'])
+        elif opcode == ssftp.OPCODE.UPL.value.get_int():
+            opts = self.connection["options"]
+
+            d_start = (opts["block"]-1) * opts["blksize"]
+
+            f = open(opts["filepath"], 'rb')
+            f.seek(d_start)
+            d_send = f.read(opts["blksize"])
+
+            self.logger.info(f"Sending next segment to {addr} (seq_num={opts['block']} len={len(d_send)})")
+            Thread(target=lambda: self._send_data(opts["block"], d_send, addr)).start()
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
-        self.logger.info(f"ACK from {addr} (seq_num=2)")
+        self.logger.info(f"ACK from {addr} (seq_num={seqnum})")
         # discard out-of-order segment
         if self.connection["options"]["block"] != seqnum-1:
             self.logger.info(f"Received out-of-order segment (seqnum={seqnum}) from {addr}. Discarding.")
@@ -250,6 +261,8 @@ class SSFTPClient():
         if self.connection["options"]["terminating_block"]:
             self.connection["state"] = 0
             self.connection["options"] = dict()
+            self.logger.info("End of file reached!")
+            return
 
         # send next segment
         else:
@@ -265,24 +278,20 @@ class SSFTPClient():
             # determine if current segment is terminating
             if len(d_send) < opts["blksize"]:
                 opts["terminating_block"] = True
-                self.logger.info("End of file reached!")
 
-            # nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
-            # self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
-
-            self.thread_pool.submit(self._send_data, opts["block"], d_send, addr)
+            Thread(target=lambda: self._send_data(opts["block"], d_send, addr)).start()
 
     def _send_data(self, seqnum: int, data: bytes, addr: tuple):
-        self.logger(f"Sending data to {addr} (seq_num={seqnum} len={len(data)})")
+        self.logger.info(f"Sending data to {addr} (seq_num={seqnum} len={len(data)})")
         retries = 0
         timeout = self.connection["options"]["timeout"]
+        pending_ack = self.connection["options"]["pending_ack"]
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
             self.socket.sendto(nextdata.encode(), addr)
             sleep(timeout/1000)
-            pending_ack = self.connection["options"]["pending_ack"]
-            if seqnum+1 < pending_ack:
+            if seqnum+1 <= pending_ack:
                 break
 
             retries += 1
@@ -303,7 +312,8 @@ class SSFTPClient():
         self.logger.info(f"DATA from {addr} (seq_num={seq_num} len={len(data)})")
 
         if seq_num != self.connection["options"]["block"]:
-            self.logger.info("Received out-of-order segment. Discarding.")
+            self.logger.info(f"Received out-of-order segment. Expected {self.connection['options']['block']} Discarding.")
+            return
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
         filename = self.connection["options"]["filename"]
@@ -325,12 +335,12 @@ class SSFTPClient():
 
     def _handle_fin(self, msg, addr):
         self.logger.info(f"FIN from {addr}")
-        # check if connection has an ongoing transaction. If upl, delete the file.
+        # check if connection has an ongoing transaction. If dwn, delete the file.
         if self.connection["state"] == 1:
-            if self.connection["options"]["op"] == ssftp.OPCODE.UPL.value.get_int():
-                self.logger.info("FIN messsage from {addr} is interrupting an upload. Aborting upload!")
-                upl_filename = self.connection["options"]["filename"]
-                os.remove(upl_filename)
+            if self.connection["options"]["op"] == ssftp.OPCODE.DWN.value.get_int():
+                self.logger.info("FIN messsage from {addr} is interrupting a download. Aborting download!")
+                dwn_filename = self.connection["options"]["filename"]
+                os.remove(dwn_filename)
 
         # disconnect
         exit_code = int.from_bytes(msg[2:4], 'big')
@@ -410,7 +420,7 @@ class SSFTPClient():
     # existing or not existing. Please ensure to
     # check this is creating the operations for the client.
     def send_upl(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
-        upl = ssftp.MSG_DWN(
+        upl = ssftp.MSG_UPL(
                 filepath=filepath,
                 mode=transfer_mode,
                 blksize=CLIENT_BLKSIZE,
@@ -450,7 +460,7 @@ if __name__ == "__main__":
     while ssftpclient.connection['addr'] is None:
         pass
 
-    ssftpclient.send_dwn('example.out', ssftp.TRANSFER_MODES.octet)
+    ssftpclient.send_upl('example.out', ssftp.TRANSFER_MODES.octet)
 
 
     while True:
