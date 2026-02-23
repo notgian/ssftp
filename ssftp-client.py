@@ -29,7 +29,6 @@ MIN_TIMEOUT_MS = 200
 
 ENABLE_LOGGING = True
 
-
 class SSFTPClient():
     def __init__(self):
         # dict of connection containing states and options
@@ -45,6 +44,7 @@ class SSFTPClient():
 
         self.socket = socket.socket(type=socket.AF_INET, family=socket.SOCK_DGRAM)
         self.socket.bind(('', 0))
+        self.socket.setblocking(False)
         self.portnum = self.socket.getsockname()[1]
 
         self._listener_thread = None
@@ -127,7 +127,7 @@ class SSFTPClient():
         connection_thread = Thread(target=lambda: self._listener(newaddr))
         self._listener_thread = connection_thread
         self._listener_thread.start()
-        self.connection['addr'] = addr
+        self.connection['addr'] = newaddr
         self.connection['state'] = 0
         self.connection['options']: dict()
 
@@ -147,6 +147,85 @@ class SSFTPClient():
             err_msg += chr(curr_char_b)
 
         self.logger.info(f"Received error (code {err_code}) from {addr}. {err_msg}")
+
+    def _handle_oack(self, msg, addr):
+        # parse options
+        fp = 2  # start where opcode ends
+
+        opts = dict()
+        while fp < len(msg):
+            opt_name = ""
+            opt_val = ""
+            while True:
+                curr_char_b = msg[fp]
+                fp += 1
+                if curr_char_b == 0:
+                    break
+                opt_name += chr(curr_char_b)
+            while True:
+                curr_char_b = msg[fp]
+                fp += 1
+                if curr_char_b == 0:
+                    break
+                opt_val += chr(curr_char_b)
+            opts[opt_name] = opt_val
+
+        blksize = MAX_BLKSIZE
+        timeout = MIN_TIMEOUT_MS
+        tsize = None
+
+        if "blksize" in opts:
+            try:
+                opt_blksize = int(opts["blksize"])
+                blksize = min(opt_blksize, MAX_BLKSIZE)
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The blksize option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+        if "timeout" in opts:
+            try:
+                opt_timeout = int(opts["timeout"])
+                timeout = max(MIN_TIMEOUT_MS, min(opt_timeout, MAX_TIMEOUT_MS))
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The timeout option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+        if "tsize" in opts:
+            try:
+                opt_tsize = int(opts["tsize"])
+                tsize = opt_tsize
+            except ValueError:
+                err = ssftp.MSG_ERR(ssftp.ERRCODE.INVALID_OPTIONS, "The tsize option must be a valid integer.")
+                self.connections[addr]["socket"].sendto(err.encode(), addr)
+                return
+
+        mode = self.connection['temp_opts']['mode']
+        opcode = self.connection['temp_opts']['op']
+        filepath = self.connection['temp_opts']['filepath']
+        # getting filename from filepath
+        pattern = r"(?<!\\)\/*[^\/]+$"
+        filename = re.search(pattern=pattern, string=filepath).group(0).lstrip('/')
+
+        # set connection options
+        self.connection["state"] = 1
+        self.connection["options"]["blksize"] = blksize
+        self.connection["options"]["timeout"] = timeout
+        self.connection["options"]["tsize"] = tsize
+        self.connection["options"]["mode"] = mode
+        self.connection["options"]["op"] = opcode
+        # Set to 0 when DWN, because we expect an initial ack from client first, and the ack handler will increment it before sending
+        initial_block = 0 if opcode == ssftp.OPCODE.DWN.value.get_int() else 1
+        self.connection["options"]["block"] = initial_block
+        self.connection["options"]["filepath"] = filepath
+        self.connection["options"]["filename"] = filename
+        self.connection["options"]["data"] = bytes()
+        self.connection["options"]["terminating_block"] = False
+        self.connection["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
+
+        # send an ack to receive block 1
+        if opcode == ssftp.OPCODE.DWN.value.get_int():
+            ack1 = ssftp.MSG_ACK(1)
+            self.socket.send(ack1.encode(), self.connection['addr'])
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
@@ -283,24 +362,59 @@ class SSFTPClient():
         self.socket.sendto(syn.encode(), addr)
 
         # wait for synack
-        msg, retaddr = self.socket.recvfrom(MAX_MESSAGE_LENGTH)
-        self._message_mux(msg, retaddr)
+        retries = 0
+        while retries < MAX_RETRIES or self.connection['addr'] is None:
+            try:
+                data, retaddr = self.socket.recvfrom(MAX_MESSAGE_LENGTH)
+                opcode = int.from_bytes(data[:2], 'big')
+                # skip non synack messages
+                if opcode != ssftp.OPCODE.SYNACK.value.get_int():
+                    continue
+                self._message_mux(data, addr)
+                if MESSAGE_READ_INTERVAL_MS > 0:
+                    sleep(1 / MESSAGE_READ_INTERVAL_MS)
+            except socket.error:
+                if MESSAGE_TIMEOUT_MS > 0:
+                    sleep(1 / MESSAGE_TIMEOUT_MS)
+                    retries += 1
 
     def send_dwn(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
         dwn = ssftp.MSG_DWN(
                 filepath=filepath,
-                mode=ssftp.TRANSFER_MODES,
+                mode=transfer_mode,
                 blksize=CLIENT_BLKSIZE,
                 timeout=CLIENT_TIMEOUT
         )
+
+        self.connection['temp_opts'] = {
+            'filepath': filepath,
+            'mode': transfer_mode,
+            'op': ssftp.OPCODE.DWN.value.get_int(),
+        }
+
+        print(self.connection['addr'])
 
         self.socket.sendto(dwn.encode(), self.connection['addr'])
 
     # This method does not account for file
     # existing or not existing. Please ensure to
     # check this is creating the operations for the client.
-    def send_upl(self, filename: str):
-        pass
+    def send_upl(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
+        upl = ssftp.MSG_DWN(
+                filepath=filepath,
+                mode=transfer_mode,
+                blksize=CLIENT_BLKSIZE,
+                timeout=CLIENT_TIMEOUT,
+                tsize=os.path.getsize(filepath)
+        )
+
+        self.connection['temp_opts'] = {
+            'filepath': filepath,
+            'mode': transfer_mode,
+            'op': ssftp.OPCODE.UPL.value.get_int(),
+        }
+
+        self.socket.sendto(upl.encode(), self.connection['addr'])
 
     def disconnect(self, exit_code: ssftp.EXITCODE):
         server_addr = self.connection['addr']
@@ -323,7 +437,11 @@ if __name__ == "__main__":
 
     ssftpclient.connect_to(known_server)
 
-    sockname = ssftpclient.socket.getsockname()
+    while ssftpclient.connection['addr'] is None:
+        pass
+
+    ssftpclient.send_dwn('example.out', ssftp.TRANSFER_MODES.octet)
+
 
     while True:
         pass
