@@ -79,6 +79,7 @@ class SSFTPClient():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
+        print(f"opcode {opcode}")
 
         # server should be SENDING, not receiving a SYNACK
         if (opcode == ssftp.OPCODE.SYNACK.value.get_int()):
@@ -124,12 +125,12 @@ class SSFTPClient():
         newaddr = (ipaddr, newport)
 
         # add to connections and start listening
-        connection_thread = Thread(target=lambda: self._listener(newaddr))
-        self._listener_thread = connection_thread
-        self._listener_thread.start()
         self.connection['addr'] = newaddr
         self.connection['state'] = 0
         self.connection['options']: dict()
+        connection_thread = Thread(target=lambda: self._listener(newaddr))
+        self._listener_thread = connection_thread
+        self._listener_thread.start()
 
         self.logger.info(f"Connected to server {newaddr}")
 
@@ -225,7 +226,7 @@ class SSFTPClient():
         # send an ack to receive block 1
         if opcode == ssftp.OPCODE.DWN.value.get_int():
             ack1 = ssftp.MSG_ACK(1)
-            self.socket.send(ack1.encode(), self.connection['addr'])
+            self.socket.sendto(ack1.encode(), self.connection['addr'])
 
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
@@ -391,8 +392,6 @@ class SSFTPClient():
             'mode': transfer_mode,
             'op': ssftp.OPCODE.DWN.value.get_int(),
         }
-
-        print(self.connection['addr'])
 
         self.socket.sendto(dwn.encode(), self.connection['addr'])
 
