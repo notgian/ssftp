@@ -27,6 +27,8 @@ MIN_TIMEOUT_MS = 200
 
 ENABLE_LOGGING = True
 
+DEBUG_PACKET_DELAY = 1000
+
 
 class SSFTPServer():
     def __init__(self, logger_stream=sys.stdout):
@@ -355,7 +357,11 @@ class SSFTPServer():
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
-            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            if self.drop_packets:
+                pass
+            else:
+                if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
+                self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
             sleep(timeout/1000)
             pending_ack = self.connections[addr]["options"]["pending_ack"]
             if seqnum+1 < pending_ack:
@@ -386,7 +392,11 @@ class SSFTPServer():
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_ACK(seq_num=seqnum)
-            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            if self.drop_packets:
+                pass
+            else:
+                if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
+                self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
             sleep(timeout/1000)
             block = self.connections[addr]["options"]["block"]
             print(block, seqnum)

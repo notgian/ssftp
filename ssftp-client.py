@@ -29,6 +29,8 @@ MIN_TIMEOUT_MS = 200
 
 ENABLE_LOGGING = True
 
+DEBUG_PACKET_DELAY = 3000
+
 class SSFTPClient():
     def __init__(self):
         # dict of connection containing states and options
@@ -49,6 +51,10 @@ class SSFTPClient():
 
         self._listener_thread = None
 
+        # This option is only for testing. Drop packets takes precedence.
+        self.drop_packets = True
+        self.delay_packets = False
+
         # on a new connection, a listener thread is created.
 
         handler = logging.StreamHandler(sys.stdout)
@@ -65,10 +71,7 @@ class SSFTPClient():
             if self.connection['addr'] is not None:
                 addr = self.connection['addr']
                 self.logger.info(f"Forceful termination of program. Disconnecting from {addr}")
-                exitcode = ssftp.EXITCODE.FORCEFUL_TERMINATION
-                fin = ssftp.MSG_FIN(exitcode)
-                self.socket.sendto(fin.encode(), addr)
-                self.disconnect(exit_code=exitcode)
+                self.disconnect(exit_code=ssftp.EXITCODE.FORCEFUL_TERMINATION)
             exit(0)
         signal.signal(signal.SIGINT, exit_handler)
 
@@ -289,7 +292,12 @@ class SSFTPClient():
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
-            self.socket.sendto(nextdata.encode(), addr)
+            if self.drop_packets:
+                pass
+            else:
+                if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
+                self.socket.sendto(nextdata.encode(), addr)
+
             if seqnum+1 <= pending_ack:
                 break
 
@@ -304,7 +312,7 @@ class SSFTPClient():
             fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
             self.socket.sendto(fin.encode(), addr)
 
-            self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
+            self.disconnect(exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
     def _send_ack(self, seqnum: int, addr: tuple):
         self.logger.info(f"Sending ACK to {addr} (seq_num={seqnum})")
@@ -320,7 +328,11 @@ class SSFTPClient():
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_ACK(seq_num=seqnum)
-            self.socket.sendto(nextdata.encode(), addr)
+            if self.drop_packets:
+                pass
+            else:
+                if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
+                self.socket.sendto(nextdata.encode(), addr)
             block = self.connection["options"]["block"]
             if block >= seqnum:
                 break
@@ -336,7 +348,7 @@ class SSFTPClient():
             fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
             self.socket.sendto(fin.encode(), addr)
 
-            self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
+            self.disconnect(exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
@@ -390,7 +402,7 @@ class SSFTPClient():
 
         # disconnect
         exit_code = int.from_bytes(msg[2:4], 'big')
-        self.disconnect(addr=addr, exit_code=exit_code)
+        self.disconnect(exit_code=exit_code)
 
     def _handle_finack(self, msg, addr):
         pass
@@ -489,7 +501,7 @@ class SSFTPClient():
         self.connection['options'] = dict()
 
         self._listener_thread = None
-        self.logger.info(f"Closed connection to server {server_addr} with exit code {exit_code.value.get_int()}")
+        self.logger.info(f"Closed connection to server {server_addr} with exit code {exit_code}")
 
     def close(self):
         self.new_conn_socket.close()
