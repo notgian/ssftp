@@ -75,6 +75,9 @@ class SSFTPClient():
             exit(0)
         signal.signal(signal.SIGINT, exit_handler)
 
+    def kill(self):
+        signal.raise_signal(signal.SIGINT)
+
     # =======================
     # MESSAGE HANDLING
     # =======================

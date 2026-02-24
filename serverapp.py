@@ -4,6 +4,7 @@ import ssftp
 import ssftp_server as srvr
 from threading import Thread
 from time import sleep
+import signal
 from collections import deque
 
 
@@ -200,6 +201,7 @@ def main(stdscr):
         key = stdscr.getch()
 
         if key == ord('q'):
+            ssftp_server.kill()
             break
         elif key == ord('u') or key == ord('U'):
             ssftp_server.drop_packets = not ssftp_server.drop_packets
