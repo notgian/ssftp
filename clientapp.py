@@ -1,7 +1,8 @@
 import curses
 import logging
 import ssftp
-import ssftp_server as srvr
+import ssftp_client as sclient
+import socket
 from threading import Thread
 from time import sleep
 from collections import deque
@@ -35,7 +36,8 @@ def main(stdscr):
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.curs_set(0)
 
-    MAX_LOGS = 5000
+    # MAX_LOGS = 5000
+    MAX_LOGS = 20
     logs = deque(maxlen=MAX_LOGS)
     vertical_scroll = 0
     horizontal_scroll = 0
@@ -44,10 +46,7 @@ def main(stdscr):
     logger.setLevel(logging.DEBUG)
     handler = CursesHandler(logs)
 
-    ssftp_server = srvr.SSFTPServer(handler)
-    ssftp_server.new_conn_listen()
-
-    Thread(target=ssftp_server.new_conn_listen, daemon=True).start()
+    ssftp_client = sclient.SSFTPClient(handler)
 
     headerwin = curses.newwin(1, 100, 0, 0)
 
@@ -60,6 +59,33 @@ def main(stdscr):
 
     footerwin = curses.newwin(1, 10, 0, 0)
 
+    # Floating windows for certain operations
+    connectwin = curses.newwin(1, 10, 0, 0)
+    dwnwin = curses.newwin(1, 10, 0, 0)
+    uplwin = curses.newwin(1, 10, 0, 0)
+
+    floatingwin = None
+    floatingwin_data = dict()
+
+    # input stuff for windows
+    input_buffer = ""
+
+    def open_floating_window(win):
+        nonlocal floatingwin
+        nonlocal floatingwin_data
+        nonlocal input_buffer
+        floatingwin = win
+        floatingwin_data = dict()
+        input_buffer = ""
+
+    def close_floating_window():
+        nonlocal floatingwin
+        nonlocal floatingwin_data
+        nonlocal input_buffer
+        floatingwin = None
+        floatingwin_data = dict()
+        input_buffer = ""
+
     while True:
         stdscr.erase()
         stdscr.noutrefresh()
@@ -71,8 +97,10 @@ def main(stdscr):
         if win_h <= 0 or win_w <= 0:
             continue
 
+        key = stdscr.getch()
+
         # Draw headerwin
-        app_title="SSFTP Server"
+        app_title="SSFTP Client"
         title_start = max(0, (win_w // 2) - (len(app_title) // 2))
         try:
             headerwin.erase()
@@ -113,47 +141,46 @@ def main(stdscr):
 
         # Draw connections window (connwin)
         connwin_x, connwin_y = logwin_x, logwin_y + logwin_h
-        connwin_h, connwin_w = win_h - logwin_h, 2 * win_w // 3
+        connwin_h, connwin_w = win_h - logwin_h, win_w // 2
         try:
             connwin.erase()
             connwin.box()
             connwin.resize(connwin_h, connwin_w)
             connwin.mvwin(connwin_y, connwin_x)
-            connwin.addstr(0, 2, " CONNECTIONS ", curses.A_BOLD)
+            connwin.addstr(0, 2, " SERVER CONNECTION ", curses.A_BOLD)
 
-            if len(ssftp_server.connections) == 0:
-                inner_text = "No active connections."
+            if ssftp_client.connection['addr'] is None:
+                inner_text = "Press \"C\" to open a connection."
                 connwin.addstr(connwin_h // 2, (connwin_w - len(inner_text)) // 2,inner_text, curses.A_DIM)
             else:
-                i = 0
-                for conn_name in list(ssftp_server.connections.keys()):
-                    conn = ssftp_server.connections[conn_name]
-                    addr = conn_name
-                    state = "IDLE" if conn["state"] == 0 else "IN TRANSFER"
-                    op = "..."
-                    if "op" in conn["options"]:
-                        op = "DWN" if conn["options"]["op"] == ssftp.OPCODE.DWN.value.get_int() else "UPL"
-                    filename = "..." if "filename" not in conn["options"] else conn["options"]["filename"]
-                    block = None if "block" not in conn["options"] else int(conn["options"]["block"])
-                    blksize = None if "blksize" not in conn["options"] else int(conn["options"]["blksize"])
-                    tsize = "..." if "tsize" not in conn["options"] else int(conn["options"]["tsize"])
-                    transferred = "..." if block is None or blksize is None else block * blksize
-                    # filename = conn["options"]["filename"]
+                conn = ssftp_client.connection
+                addr = conn['addr']
+                state = "IDLE" if conn["state"] == 0 else "IN TRANSFER"
+                op = "..."
+                if "op" in conn["options"]:
+                    op = "DWN" if conn["options"]["op"] == ssftp.OPCODE.DWN.value.get_int() else "UPL"
+                filename = "..." if "filename" not in conn["options"] else conn["options"]["filename"]
+                block = None if "block" not in conn["options"] else int(conn["options"]["block"])
+                blksize = None if "blksize" not in conn["options"] else int(conn["options"]["blksize"])
+                tsize = "..." if "tsize" not in conn["options"] else int(conn["options"]["tsize"])
+                transferred = "..." if block is None or blksize is None else block * blksize
+                # filename = conn["options"]["filename"]
 
-                    max_len = 25
-                    connwin.addstr(2, 2 + i * (2+max_len),f"{addr[0]}:{addr[1]}".center(max_len, " "), curses.A_REVERSE)
-                    connwin.addstr(3, 2 + i * (2+max_len),f"state: {state}".center(max_len, " "), curses.A_NORMAL)
-                    if conn["state"] == 0:
-                        continue
-                    connwin.addstr(4, 2 + i * (2+max_len),f"op: {op}".center(max_len, " "), curses.A_NORMAL)
-                    connwin.addstr(5, 2 + i * (2+max_len),f"file: {filename}".center(max_len, " "), curses.A_NORMAL)
-                    connwin.addstr(6, 2 + i * (2+max_len),f"bytes: {transferred}/{tsize}".center(max_len, " "), curses.A_NORMAL)
-                    i+=1
+                max_len = 30
+                # logs.append(str(addr)))
+                connwin.addstr(2, 2 + (2+max_len),f"{addr[0]}:{addr[1]}".center(max_len, " "), curses.A_REVERSE)
+                connwin.addstr(3, 2 + (2+max_len),f"state: {state}".center(max_len, " "), curses.A_NORMAL)
+                if conn["state"] == 0:
+                    pass
+                else:
+                    connwin.addstr(4, 2 + (2+max_len),f"op: {op}".center(max_len, " "), curses.A_NORMAL)
+                    connwin.addstr(5, 2 + (2+max_len),f"file: {filename}".center(max_len, " "), curses.A_NORMAL)
+                    connwin.addstr(6, 2 + (2+max_len),f"bytes: {transferred}/{tsize}".center(max_len, " "), curses.A_NORMAL)
             connwin.noutrefresh()
         except curses.error:
             pass
 
-        # Testing window
+        # Extras window
         extrawin_x, extrawin_y = connwin_x + connwin_w, connwin_y
         extrawin_h, extrawin_w = connwin_h, win_w - connwin_w
         try:
@@ -164,10 +191,11 @@ def main(stdscr):
 
             extrawin.addstr(0, 2, " EXTRAS ", curses.A_BOLD)
 
-            state_drop = "ENABLED" if ssftp_server.drop_packets else "DISABLED"
-            state_delay = "ENABLED" if ssftp_server.delay_packets else "DISABLED"
+            state_drop = "ENABLED" if ssftp_client.drop_packets else "DISABLED"
+            state_delay = "ENABLED" if ssftp_client.delay_packets else "DISABLED"
             extrawin.addstr(2, 2, f" DROP PACKETS: {state_drop} ", curses.A_NORMAL)
             extrawin.addstr(3, 2, f" DELAY PACKETS: {state_delay} ", curses.A_NORMAL)
+
 
             # extrawin.addstr(extrawin_h-3, 1, f"  TOGGLE DROPPING: U".ljust(extrawin_w - 2), curses.A_STANDOUT)
             # extrawin.addstr(extrawin_h-2, 1, f"  TOGGLE DELAY: I".ljust(extrawin_w - 2), curses.A_STANDOUT)
@@ -190,22 +218,76 @@ def main(stdscr):
         except curses.error:
             pass
 
+        # for each floating window
+        try:
+            if floatingwin == connectwin:
+                connectwin_h, connectwin_w = 10, win_w//2
+                connectwin_x, connectwin_y = (win_w-connectwin_w)//2, (win_h-connectwin_h)//2
+                connectwin.resize(connectwin_h, connectwin_w)
+                connectwin.mvwin(connectwin_y, connectwin_x)
+                connectwin.box()
+                connectwin.addstr(0, 2, " CONNECT TO SERVER ", curses.A_BOLD)
+                connectwin.addstr(2, 4, "Enter server address (ip:port):")
+                connectwin.addstr(3, 4, input_buffer.ljust(connectwin_w-8), curses.A_STANDOUT)
+                if "err_msg" in floatingwin_data:
+                    connectwin.addstr(5, 4, floatingwin_data["err_msg"], curses.A_ITALIC)
+                if "err_msg_cd" in floatingwin_data:
+                    floatingwin_data["err_msg_cd"] -= 1
+                    if floatingwin_data["err_msg_cd"] <= 0 and "err_msg" in floatingwin_data:
+                        floatingwin_data["err_msg"] = " "*(connectwin_w-8)
+
+            def is_valid_ip(address):
+                try:
+                    ip, port_str = address.rsplit(':', 1)
+                    socket.inet_aton(ip)
+                    if 0 <= int(port_str) <= 65535:
+                        return True
+                    return False
+                except (socket.error, ValueError):
+                    return False
+
+            if key in [ord(f'{x}') for x in range(0, 10)] + [ord(':'), ord('.')]:
+                input_buffer += chr(key)
+            elif key == ord('x') or key == ord('X'):
+                close_floating_window()
+            elif key == curses.KEY_BACKSPACE:
+                input_buffer = input_buffer[:-1]
+            elif key in (ord('\n'), ord('\r')):
+                if not is_valid_ip(input_buffer):
+                    floatingwin_data["err_msg"] = "Invalid IPv4 address."
+                    floatingwin_data["err_msg_cd"] = 60 * 2
+                else:
+                    ip, port = input_buffer.rsplit(':', 1)
+                    addr = (ip, int(port))
+                    Thread(target=lambda:ssftp_client.connect_to(addr),daemon=True).start()
+                    close_floating_window()
+
+            # sort of like a prevent default action
+            if floatingwin is not None:
+                key = None
+
+        except curses.error:
+            pass
+
         # refreshing windows
         try:
             logwin.noutrefresh()
             logpad.refresh(vertical_scroll, horizontal_scroll, logpad_y, logpad_x, logpad_h, logpad_w)
+            if floatingwin is not None:
+                floatingwin.noutrefresh()
         except curses.error:
             pass
 
-        key = stdscr.getch()
-
         if key == ord('q'):
-            ssftp_server.kill()
+            ssftp_client.kill()
             break
         elif key == ord('u') or key == ord('U'):
-            ssftp_server.drop_packets = not ssftp_server.drop_packets
+            ssftp_client.drop_packets = not ssftp_client.drop_packets
         elif key == ord('i') or key == ord('I'):
-            ssftp_server.delay_packets = not ssftp_server.delay_packets
+            ssftp_client.delay_packets = not ssftp_client.delay_packets
+
+        elif key == ord('c') or key == ord('C'):
+            open_floating_window(connectwin)
 
         elif key == curses.KEY_UP and vertical_scroll > 0:
             vertical_scroll -= 1

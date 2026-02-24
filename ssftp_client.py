@@ -71,9 +71,14 @@ class SSFTPClient():
             if self.connection['addr'] is not None:
                 addr = self.connection['addr']
                 self.logger.info(f"Forceful termination of program. Disconnecting from {addr}")
-                self.disconnect(exit_code=ssftp.EXITCODE.FORCEFUL_TERMINATION)
+                exitcode = ssftp.EXITCODE.FORCEFUL_TERMINATION
+                fin = ssftp.MSG_FIN(exitcode)
+                self.socket.sendto(fin.encode(), addr)
+                self.disconnect(exit_code=exitcode)
             exit(0)
         signal.signal(signal.SIGINT, exit_handler)
+
+        self.logger.info(f"Started SSFTP client @ {self.socket.getsockname()}")
 
     def kill(self):
         signal.raise_signal(signal.SIGINT)
@@ -85,7 +90,6 @@ class SSFTPClient():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
-        print(f"opcode {opcode}")
 
         # server should be SENDING, not receiving a SYNACK
         if (opcode == ssftp.OPCODE.SYNACK.value.get_int()):
@@ -136,7 +140,7 @@ class SSFTPClient():
         self.connection['addr'] = newaddr
         self.connection['state'] = 0
         self.connection['options']: dict()
-        connection_thread = Thread(target=lambda: self._listener(newaddr))
+        connection_thread = Thread(target=lambda: self._listener(newaddr), daemon=True)
         self._listener_thread = connection_thread
         self._listener_thread.start()
 
@@ -432,6 +436,7 @@ class SSFTPClient():
                     sleep(1 / MESSAGE_TIMEOUT_MS)
         self.logger.info(f"Listener for {target_addr} stopped.")
 
+
     # =======================
     #    Client operations
     # =======================
@@ -445,8 +450,9 @@ class SSFTPClient():
         self.socket.sendto(syn.encode(), addr)
 
         # wait for synack
+        self.logger.info(f"Attempting to connect to server @ {addr}.")
         retries = 0
-        while retries < MAX_RETRIES or self.connection['addr'] is None:
+        while retries < MAX_RETRIES and self.connection['addr'] is None:
             try:
                 data, retaddr = self.socket.recvfrom(MAX_MESSAGE_LENGTH)
                 opcode = int.from_bytes(data[:2], 'big')
@@ -455,11 +461,14 @@ class SSFTPClient():
                     continue
                 self._message_mux(data, addr)
                 if MESSAGE_READ_INTERVAL_MS > 0:
-                    sleep(1 / MESSAGE_READ_INTERVAL_MS)
+                    sleep(MESSAGE_READ_INTERVAL_MS/1000)
             except socket.error:
                 if MESSAGE_TIMEOUT_MS > 0:
-                    sleep(1 / MESSAGE_TIMEOUT_MS)
+                    sleep(MESSAGE_TIMEOUT_MS/1000)
                     retries += 1
+
+        if self.connection['addr'] is None:
+            self.logger.info(f"Failed to connect to {addr}.")
 
     def send_dwn(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
         dwn = ssftp.MSG_DWN(
@@ -506,11 +515,6 @@ class SSFTPClient():
         self._listener_thread = None
         self.logger.info(f"Closed connection to server {server_addr} with exit code {exit_code}")
 
-    def close(self):
-        self.new_conn_socket.close()
-        self.new_conn_socket = None
-        self._new_conn_listener_thread = None
-
 
 if __name__ == "__main__":
     known_server = ('192.168.68.70', ssftp.SERVER_LISTEN_PORT)
@@ -523,7 +527,6 @@ if __name__ == "__main__":
 
     # ssftpclient.send_upl('example.out', ssftp.TRANSFER_MODES.octet)
     ssftpclient.send_dwn('example.out', ssftp.TRANSFER_MODES.octet)
-
 
     while True:
         pass

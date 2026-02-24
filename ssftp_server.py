@@ -517,6 +517,8 @@ class SSFTPServer():
         self._new_conn_listener_thread = Thread(target=self._new_conn_listener, daemon=True)
         self._new_conn_listener_thread.start()
 
+        self.logger.info(f"Listening for new connections @ {self.new_conn_socket.getsockname()}")
+
     # listens for messages on a specific socket assocaited with a connection
     # used as the target method for new connections.
     # target addr used to check in while loop to ensure the conneciton is
