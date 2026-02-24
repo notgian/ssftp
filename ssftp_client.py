@@ -52,7 +52,7 @@ class SSFTPClient():
         self._listener_thread = None
 
         # This option is only for testing. Drop packets takes precedence.
-        self.drop_packets = True
+        self.drop_packets = False
         self.delay_packets = False
 
         # on a new connection, a listener thread is created.
@@ -164,6 +164,9 @@ class SSFTPClient():
 
     def _handle_oack(self, msg, addr):
         self.logger.info(f"OACK from {addr}")
+        if self.connection["state"] == 1:
+            self.logger.info("Already in transfer. Disregarding OACK")
+            return
         # parse options
         fp = 2  # start where opcode ends
 
@@ -253,7 +256,7 @@ class SSFTPClient():
             f.seek(d_start)
             d_send = f.read(opts["blksize"])
 
-            self.logger.info(f"Sending next segment to {addr} (seq_num={opts['block']} len={len(d_send)})")
+            self.logger.info(f"Sending first segment to {addr} (seq_num={opts['block']} len={len(d_send)})")
             Thread(target=lambda: self._send_data(opts["block"], d_send, addr)).start()
 
     def _handle_ack(self, msg, addr):
@@ -295,17 +298,21 @@ class SSFTPClient():
         self.logger.info(f"Sending data to {addr} (seq_num={seqnum} len={len(data)})")
         retries = 0
         timeout = self.connection["options"]["timeout"]
-        pending_ack = self.connection["options"]["pending_ack"]
 
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
+            if "pending_ack" not in self.connection["options"]:
+                if self.connection["state"] == 0:
+                    break
+                continue
+            pending_ack = self.connection["options"]["pending_ack"]
             if self.drop_packets:
                 pass
             else:
                 if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
                 self.socket.sendto(nextdata.encode(), addr)
 
-            if seqnum+1 <= pending_ack:
+            if seqnum+1 < pending_ack:
                 break
 
             retries += 1
@@ -406,6 +413,7 @@ class SSFTPClient():
                 self.logger.info("FIN messsage from {addr} is interrupting a download. Aborting download!")
                 dwn_filename = self.connection["options"]["filename"]
                 os.remove(dwn_filename)
+                self.disconnect(ssftp.EXITCODE.CONNECTION_LOST)
 
         # disconnect
         exit_code = int.from_bytes(msg[2:4], 'big')

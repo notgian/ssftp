@@ -1,5 +1,6 @@
 import curses
 import logging
+import os
 import ssftp
 import ssftp_client as sclient
 import socket
@@ -36,8 +37,7 @@ def main(stdscr):
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.curs_set(0)
 
-    # MAX_LOGS = 5000
-    MAX_LOGS = 20
+    MAX_LOGS = 5000
     logs = deque(maxlen=MAX_LOGS)
     vertical_scroll = 0
     horizontal_scroll = 0
@@ -236,35 +236,97 @@ def main(stdscr):
                     if floatingwin_data["err_msg_cd"] <= 0 and "err_msg" in floatingwin_data:
                         floatingwin_data["err_msg"] = " "*(connectwin_w-8)
 
-            def is_valid_ip(address):
-                try:
-                    ip, port_str = address.rsplit(':', 1)
-                    socket.inet_aton(ip)
-                    if 0 <= int(port_str) <= 65535:
-                        return True
-                    return False
-                except (socket.error, ValueError):
-                    return False
+                def is_valid_ip(address):
+                    try:
+                        ip, port_str = address.rsplit(':', 1)
+                        socket.inet_aton(ip)
+                        if 0 <= int(port_str) <= 65535:
+                            return True
+                        return False
+                    except (socket.error, ValueError):
+                        return False
 
-            if key in [ord(f'{x}') for x in range(0, 10)] + [ord(':'), ord('.')]:
-                input_buffer += chr(key)
-            elif key == ord('x') or key == ord('X'):
-                close_floating_window()
-            elif key == curses.KEY_BACKSPACE:
-                input_buffer = input_buffer[:-1]
-            elif key in (ord('\n'), ord('\r')):
-                if not is_valid_ip(input_buffer):
-                    floatingwin_data["err_msg"] = "Invalid IPv4 address."
-                    floatingwin_data["err_msg_cd"] = 60 * 2
-                else:
-                    ip, port = input_buffer.rsplit(':', 1)
-                    addr = (ip, int(port))
-                    Thread(target=lambda:ssftp_client.connect_to(addr),daemon=True).start()
+                if key in [ord(f'{x}') for x in range(0, 10)] + [ord(':'), ord('.')]:
+                    input_buffer += chr(key)
+                elif key == ord('x') or key == ord('X'):
+                    close_floating_window()
+                elif key == curses.KEY_BACKSPACE:
+                    input_buffer = input_buffer[:-1]
+                elif key in (ord('\n'), ord('\r')):
+                    if not is_valid_ip(input_buffer):
+                        floatingwin_data["err_msg"] = "Invalid IPv4 address."
+                        floatingwin_data["err_msg_cd"] = 60 * 2
+                    else:
+                        ip, port = input_buffer.rsplit(':', 1)
+                        addr = (ip, int(port))
+                        Thread(target=lambda:ssftp_client.connect_to(addr),daemon=True).start()
+                        close_floating_window()
+
+                # sort of like a prevent default action
+                if floatingwin is not None:
+                    key = None
+
+            elif floatingwin == dwnwin:
+                dwnwin_h, dwnwin_w = 10, win_w//2
+                dwnwin_x, dwnwin_y = (win_w-dwnwin_w)//2, (win_h-dwnwin_h)//2
+                dwnwin.resize(dwnwin_h, dwnwin_w)
+                dwnwin.mvwin(dwnwin_y, dwnwin_x)
+                dwnwin.box()
+                dwnwin.addstr(0, 2, " DOWNLOAD FILE ", curses.A_BOLD)
+                dwnwin.addstr(2, 4, "Enter name of file to download:")
+                dwnwin.addstr(3, 4, input_buffer.ljust(dwnwin_w-8), curses.A_STANDOUT)
+
+                if 32 <= key <= 126:  # valid keys for input
+                    input_buffer += chr(key)
+                elif key == curses.KEY_F1:
+                    close_floating_window()
+                elif key == curses.KEY_BACKSPACE:
+                    input_buffer = input_buffer[:-1]
+                elif key in (ord('\n'), ord('\r')):
+                    def fn(): ssftp_client.send_dwn(input_buffer, ssftp.TRANSFER_MODES.octet)
+                    Thread(target=fn, daemon=True).start()
                     close_floating_window()
 
-            # sort of like a prevent default action
-            if floatingwin is not None:
-                key = None
+                # sort of like a prevent default action
+                if floatingwin is not None:
+                    key = None
+
+            elif floatingwin == uplwin:
+                uplwin_h, uplwin_w = 2*win_h//3, win_w//2
+                uplwin_x, uplwin_y = (win_w-uplwin_w)//2, (win_h-uplwin_h)//2
+                uplwin.resize(uplwin_h, uplwin_w)
+                uplwin.mvwin(uplwin_y, uplwin_x)
+                uplwin.box()
+                uplwin.addstr(0, 2, " UPLOAD FILE ", curses.A_BOLD)
+                uplwin.addstr(2, 4, "Select file to upload.")
+
+                # uplwin.addstr(3, 4, input_buffer.ljust(uplwin_w-8), curses.A_STANDOUT)
+                if "selection" not in floatingwin_data:
+                    floatingwin_data["selection"] = 0
+
+                files = [file for file in os.listdir('.') if os.path.isfile(file)]
+                for i, file in enumerate(files):
+                    prefix = "  "
+                    if floatingwin_data["selection"] == i:
+                        prefix = "> "
+                    uplwin.addstr(3+i, 6, f'{prefix} {file}', curses.A_NORMAL)
+
+                if key == curses.KEY_F1:
+                    close_floating_window()
+                elif key in (ord('\n'), ord('\r')):
+                    selection = floatingwin_data["selection"]
+                    selected_file = files[selection] 
+                    def fn(): ssftp_client.send_upl(selected_file, ssftp.TRANSFER_MODES.octet)
+                    Thread(target=fn, daemon=True).start()
+                    close_floating_window()
+                elif key == curses.KEY_UP:
+                    if floatingwin_data["selection"] > 0: floatingwin_data["selection"] -= 1
+                elif key == curses.KEY_DOWN:
+                    if floatingwin_data["selection"] < len(files): floatingwin_data["selection"] += 1
+
+                # sort of like a prevent default action
+                if floatingwin is not None:
+                    key = None
 
         except curses.error:
             pass
@@ -288,6 +350,10 @@ def main(stdscr):
 
         elif key == ord('c') or key == ord('C'):
             open_floating_window(connectwin)
+        elif key == ord('r') or key == ord('R'):
+            open_floating_window(dwnwin)
+        elif key == ord('w') or key == ord('W'):
+            open_floating_window(uplwin)
 
         elif key == curses.KEY_UP and vertical_scroll > 0:
             vertical_scroll -= 1
