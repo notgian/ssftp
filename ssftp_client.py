@@ -485,6 +485,7 @@ class SSFTPClient():
             'op': ssftp.OPCODE.DWN.value.get_int(),
         }
 
+        self.logger.info(f"Sending DWN request to {self.connection['addr']}")
         self.socket.sendto(dwn.encode(), self.connection['addr'])
 
     # This method does not account for file
@@ -505,6 +506,7 @@ class SSFTPClient():
             'op': ssftp.OPCODE.UPL.value.get_int(),
         }
 
+        self.logger.info(f"Sending UPL request to {self.connection['addr']}")
         self.socket.sendto(upl.encode(), self.connection['addr'])
 
     def disconnect(self, exit_code: ssftp.EXITCODE):

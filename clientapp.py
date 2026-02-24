@@ -210,12 +210,12 @@ def main(stdscr):
             footerwin.erase()
             footerwin.resize(footerwin_h, footerwin_w)
             footerwin.mvwin(footerwin_y, footerwin_x)
-            footer_text = "Press \"Q\" to Quit.   DROP PACKETS: \"U\"   DELAY PACKETS: \"I\"".center(footerwin_w-2)
-            if len(footer_text) > footerwin_w:
-                footer_text = footer_text[:footerwin_w-4] + "..."
-            footerwin.addstr(0, 1, footer_text, curses.A_STANDOUT)
+            footer_text1 = "Q - QUIT   U - DROP PACKETS   I - DELAY PACKETS   C - CONNECT   W - READ   R - DOWNLOAD   F1 - CLOSE MENU".center(footerwin_w-2)
+            if len(footer_text1) > footerwin_w:
+                footer_text1 = footer_text1[:footerwin_w-4] + "..."
+            footerwin.addstr(0, 1, footer_text1, curses.A_STANDOUT)
             footerwin.noutrefresh()
-        except curses.error:
+        except curses.error as e:
             pass
 
         # for each floating window
@@ -248,7 +248,7 @@ def main(stdscr):
 
                 if key in [ord(f'{x}') for x in range(0, 10)] + [ord(':'), ord('.')]:
                     input_buffer += chr(key)
-                elif key == ord('x') or key == ord('X'):
+                elif key == curses.KEY_F1:
                     close_floating_window()
                 elif key == curses.KEY_BACKSPACE:
                     input_buffer = input_buffer[:-1]
@@ -351,8 +351,14 @@ def main(stdscr):
         elif key == ord('c') or key == ord('C'):
             open_floating_window(connectwin)
         elif key == ord('r') or key == ord('R'):
+            if ssftp_client.connection['addr'] is None:
+                logs.append("Please open a connection first.")
+                continue
             open_floating_window(dwnwin)
         elif key == ord('w') or key == ord('W'):
+            if ssftp_client.connection['addr'] is None:
+                logs.append("Please open a connection first.")
+                continue
             open_floating_window(uplwin)
 
         elif key == curses.KEY_UP and vertical_scroll > 0:

@@ -182,7 +182,7 @@ def main(stdscr):
             footerwin.erase()
             footerwin.resize(footerwin_h, footerwin_w)
             footerwin.mvwin(footerwin_y, footerwin_x)
-            footer_text = "Press \"Q\" to Quit.   DROP PACKETS: \"U\"   DELAY PACKETS: \"I\"".center(footerwin_w-2)
+            footer_text = "Q - QUIT   U - DROP PACKETS   I - DELAY PACKETS".center(footerwin_w-2)
             if len(footer_text) > footerwin_w:
                 footer_text = footer_text[:footerwin_w-4] + "..."
             footerwin.addstr(0, 1, footer_text, curses.A_STANDOUT)
