@@ -290,13 +290,46 @@ class SSFTPClient():
         while retries <= MAX_RETRIES:
             nextdata = ssftp.MSG_DATA(seq_num=seqnum, data=data)
             self.socket.sendto(nextdata.encode(), addr)
-            sleep(timeout/1000)
             if seqnum+1 <= pending_ack:
                 break
 
             retries += 1
             if retries <= MAX_RETRIES:
                 self.logger.info(f"No ack({seqnum+1}) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
+
+            sleep(timeout/1000)
+
+        if retries > MAX_RETRIES:
+            self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
+            fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
+            self.socket.sendto(fin.encode(), addr)
+
+            self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
+
+    def _send_ack(self, seqnum: int, addr: tuple):
+        self.logger.info(f"Sending ACK to {addr} (seq_num={seqnum})")
+
+        # simply send the last ack
+        if self.connection['state'] == 0:
+            nextdata = ssftp.MSG_ACK(seq_num=seqnum)
+            self.socket.sendto(nextdata.encode(), addr)
+            return
+
+        retries = 0
+        timeout = self.connection["options"]["timeout"]
+
+        while retries <= MAX_RETRIES:
+            nextdata = ssftp.MSG_ACK(seq_num=seqnum)
+            self.socket.sendto(nextdata.encode(), addr)
+            block = self.connection["options"]["block"]
+            if block >= seqnum:
+                break
+
+            retries += 1
+            if retries <= MAX_RETRIES:
+                self.logger.info(f"No data({seqnum}) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
+
+            sleep(timeout/1000)
 
         if retries > MAX_RETRIES:
             self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
@@ -323,15 +356,28 @@ class SSFTPClient():
         with open(filename, 'ab') as f:
             f.write(data)
 
-        self.connection["options"]["block"] += 1
-        ack = ssftp.MSG_ACK(self.connection["options"]["block"])
-        self.socket.sendto(ack.encode(), addr)
+        # self.connection["options"]["block"] += 1
+        # ack = ssftp.MSG_ACK(self.connection["options"]["block"])
+        # self.socket.sendto(ack.encode(), addr)
+
+        # this marks the end of a transaction
+        # if len(data) < self.connection["options"]["blksize"]:
+        #     self.connection["state"] = 0
+        #     self.connection["options"] = dict()
+        #     self.logger.info("End of file reached!")
 
         # this marks the end of a transaction
         if len(data) < self.connection["options"]["blksize"]:
+            last_ack_num = self.connection['options']['block'] + 1
+
             self.connection["state"] = 0
             self.connection["options"] = dict()
+
             self.logger.info("End of file reached!")
+            Thread(target=lambda: self._send_ack(last_ack_num, self.connection['addr'])).start()
+        else:
+            self.connection["options"]["block"] += 1
+            Thread(target=lambda: self._send_ack(self.connection['options']['block'], self.connection['addr'])).start()
 
     def _handle_fin(self, msg, addr):
         self.logger.info(f"FIN from {addr}")
@@ -460,7 +506,8 @@ if __name__ == "__main__":
     while ssftpclient.connection['addr'] is None:
         pass
 
-    ssftpclient.send_upl('example.out', ssftp.TRANSFER_MODES.octet)
+    # ssftpclient.send_upl('example.out', ssftp.TRANSFER_MODES.octet)
+    ssftpclient.send_dwn('example.out', ssftp.TRANSFER_MODES.octet)
 
 
     while True:

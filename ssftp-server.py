@@ -51,6 +51,10 @@ class SSFTPServer():
         self.logger.addHandler(handler)
         self.logger.disabled = False
 
+        # This option is only for testing. Drop packets takes precedence.
+        self.drop_packets = False
+        self.delay_packets = False
+
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_CONNECTIONS)
 
         # This exit handler will allow us to send a fin to the client(s)
@@ -320,6 +324,7 @@ class SSFTPServer():
         if self.connections[addr]["options"]["terminating_block"]:
             self.connections[addr]["state"] = 0
             self.connections[addr]["options"] = dict()
+            self.logger.info("End of file reached!")
             return
 
         # send next segment
@@ -336,7 +341,6 @@ class SSFTPServer():
             # determine if current segment is terminating
             if len(d_send) < opts["blksize"]:
                 opts["terminating_block"] = True
-                self.logger.info("End of file reached!")
 
             # nextdata = ssftp.MSG_DATA(seq_num=opts["block"], data=d_send)
             # self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
@@ -368,6 +372,38 @@ class SSFTPServer():
 
             self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
+    def _send_ack(self, seqnum: int, addr: tuple):
+        self.logger.info(f"Sending ACK to {addr} (seq_num={seqnum})")
+
+        # simply send the last ack
+        if self.connections[addr]['state'] == 0:
+            nextdata = ssftp.MSG_ACK(seq_num=seqnum)
+            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            return
+
+        retries = 0
+        timeout = self.connections[addr]["options"]["timeout"]
+
+        while retries <= MAX_RETRIES:
+            nextdata = ssftp.MSG_ACK(seq_num=seqnum)
+            self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
+            sleep(timeout/1000)
+            block = self.connections[addr]["options"]["block"]
+            print(block, seqnum)
+            if block >= seqnum:
+                break
+
+            retries += 1
+            if retries <= MAX_RETRIES:
+                self.logger.info(f"No data({seqnum}) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
+
+        if retries > MAX_RETRIES:
+            self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
+            fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
+            self.connections[addr]["socket"].sendto(fin.encode(), addr)
+
+            self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
+
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
         data = msg[4:-1]  # excluding the final 0 byte
@@ -389,16 +425,22 @@ class SSFTPServer():
         with open(filename, 'ab') as f:
             f.write(data)
 
-        self.connections[addr]["options"]["block"] += 1
-        ack = ssftp.MSG_ACK(self.connections[addr]["options"]["block"])
-        self.logger.info(f"Sending ACK to {addr} (seq_num={self.connections[addr]["options"]["block"]})")
-        self.connections[addr]["socket"].sendto(ack.encode(), addr)
+        # ack = ssftp.MSG_ACK(self.connections[addr]["options"]["block"])
+        # self.logger.info(f"Sending ACK to {addr} (seq_num={self.connections[addr]["options"]["block"]})")
+        # self.connections[addr]["socket"].sendto(ack.encode(), addr)
 
         # this marks the end of a transaction
         if len(data) < self.connections[addr]["options"]["blksize"]:
+            last_ack_num = self.connections[addr]['options']['block'] + 1
+
             self.connections[addr]["state"] = 0
             self.connections[addr]["options"] = dict()
+
+            self.thread_pool.submit(self._send_ack, last_ack_num, addr=addr)
             self.logger.info("End of file reached!")
+        else:
+            self.connections[addr]["options"]["block"] += 1
+            self.thread_pool.submit(self._send_ack, self.connections[addr]['options']['block'], addr=addr)
 
     def _handle_fin(self, msg, addr):
         exit_code = int.from_bytes(msg[2:4], 'big')
