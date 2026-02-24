@@ -298,10 +298,6 @@ class SSFTPServer():
             set_opts()
 
             self.thread_pool.submit(self._send_upl_oack, tsize, blksize, timeout, addr)
-            # self.logger.info(f"Sending OACK to {addr} tsize={tsize} blksize={blksize} timeout={timeout}")
-            # self.connections[addr]["socket"].sendto(oack.encode(), addr)
-
-
 
     def _handle_err(self, msg, addr):
         self.logger.info(f"ERR from {addr}")
@@ -322,6 +318,9 @@ class SSFTPServer():
     def _handle_ack(self, msg, addr):
         seqnum = int.from_bytes(msg[2:4], 'big')
         self.logger.info(f"ACK from {addr} (seq_num={seqnum})")
+
+        if "block" not in self.connections[addr]['options'] or self.connections[addr]['state'] == 0:
+            return
 
         # discard out-of-order segment
         if self.connections[addr]["options"]["block"] != seqnum-1:

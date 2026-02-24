@@ -245,8 +245,7 @@ class SSFTPClient():
         # send an ack to receive block 1
         if opcode == ssftp.OPCODE.DWN.value.get_int():
             self.logger.info(f"Sending ack to {self.connection['addr']} to receive first block.")
-            ack1 = ssftp.MSG_ACK(1)
-            self.socket.sendto(ack1.encode(), self.connection['addr'])
+            Thread(target=lambda: self._send_ack(1, self.connection['addr'])).start()
         elif opcode == ssftp.OPCODE.UPL.value.get_int():
             opts = self.connection["options"]
 
@@ -347,8 +346,14 @@ class SSFTPClient():
             else:
                 if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
                 self.socket.sendto(nextdata.encode(), addr)
+
+            if "block" not in self.connection["options"]:
+                if self.connection["state"] == 0:
+                    break
+                continue
+
             block = self.connection["options"]["block"]
-            if block >= seqnum:
+            if block == seqnum+1:
                 break
 
             retries += 1
@@ -405,7 +410,8 @@ class SSFTPClient():
             if self.connection["options"]["op"] == ssftp.OPCODE.DWN.value.get_int():
                 self.logger.info("FIN messsage from {addr} is interrupting a download. Aborting download!")
                 dwn_filename = self.connection["options"]["filename"] + '.tmp'
-                os.remove(dwn_filename)
+                if os.path.exists(dwn_filename):
+                    os.remove(dwn_filename)
                 self.disconnect(ssftp.EXITCODE.CONNECTION_LOST)
 
         # disconnect
