@@ -3,7 +3,6 @@ import ssftp
 from threading import Thread
 from time import sleep
 
-import concurrent.futures
 import logging
 import sys
 import os
@@ -31,8 +30,9 @@ ENABLE_LOGGING = True
 
 DEBUG_PACKET_DELAY = 3000
 
+
 class SSFTPClient():
-    def __init__(self):
+    def __init__(self, logger_stream=sys.stdout):
         # dict of connection containing states and options
         # two possible states: 0 - idle, 1 - smth's happening aka data transfer
         # {addr: server_address, state: 0|1,  options: {opts:here,} }
@@ -57,7 +57,7 @@ class SSFTPClient():
 
         # on a new connection, a listener thread is created.
 
-        handler = logging.StreamHandler(sys.stdout)
+        handler = logging.StreamHandler(logger_stream)
         handler.setLevel(logging.INFO)
 
         self.logger = logging.getLogger()

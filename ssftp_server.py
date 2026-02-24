@@ -79,7 +79,7 @@ class SSFTPServer():
     def _message_mux(self, message: bytes, address: tuple):
         opcode_bytes = message[0:2]
         opcode = int.from_bytes(opcode_bytes, 'big')
-        print(f"opcode: {opcode}")
+        # print(f"opcode: {opcode}")
 
         if (opcode == ssftp.OPCODE.SYN.value.get_int()):
             self._handle_syn(message, address)
@@ -184,7 +184,7 @@ class SSFTPServer():
                 opt_val += chr(curr_char_b)
             opts[opt_name] = opt_val
 
-        print(opts)
+        # print(opts)
 
         self.logger.info("Parsed options => opdcode: {} filepath: {} | mode: {} | opts: {}".format(opcode, filepath, mode, opts))
 
@@ -399,7 +399,6 @@ class SSFTPServer():
                 self.connections[addr]["socket"].sendto(nextdata.encode(), addr)
             sleep(timeout/1000)
             block = self.connections[addr]["options"]["block"]
-            print(block, seqnum)
             if block >= seqnum:
                 break
 
@@ -417,8 +416,6 @@ class SSFTPServer():
     def _handle_data(self, msg, addr):
         seq_num = int.from_bytes(msg[2:4], 'big')
         data = msg[4:-1]  # excluding the final 0 byte
-
-        print(self.connections[addr]["options"]["block"])
 
         self.logger.info(f"DATA from {addr} (seq_num={seq_num} len={len(data)})")
 
