@@ -376,21 +376,10 @@ class SSFTPClient():
 
         # TODO: UNCOMMENT THE LINE BELOW TO USE THE ACTUAL FILENAME
         filename = self.connection["options"]["filename"]
-        # for testing purposes, we will use a different filename
-        # filename = 'uploaded.out'
+        filename_temp = filename + '.tmp'
 
-        with open(filename, 'ab') as f:
+        with open(filename_temp, 'ab') as f:
             f.write(data)
-
-        # self.connection["options"]["block"] += 1
-        # ack = ssftp.MSG_ACK(self.connection["options"]["block"])
-        # self.socket.sendto(ack.encode(), addr)
-
-        # this marks the end of a transaction
-        # if len(data) < self.connection["options"]["blksize"]:
-        #     self.connection["state"] = 0
-        #     self.connection["options"] = dict()
-        #     self.logger.info("End of file reached!")
 
         # this marks the end of a transaction
         if len(data) < self.connection["options"]["blksize"]:
@@ -401,6 +390,10 @@ class SSFTPClient():
 
             self.logger.info("End of file reached!")
             Thread(target=lambda: self._send_ack(last_ack_num, self.connection['addr'])).start()
+
+            if os.path.exists(filename) and os.path.isfile(filename):
+                os.remove(filename)
+            os.rename(filename_temp, filename)
         else:
             self.connection["options"]["block"] += 1
             Thread(target=lambda: self._send_ack(self.connection['options']['block'], self.connection['addr'])).start()
@@ -411,7 +404,7 @@ class SSFTPClient():
         if self.connection["state"] == 1:
             if self.connection["options"]["op"] == ssftp.OPCODE.DWN.value.get_int():
                 self.logger.info("FIN messsage from {addr} is interrupting a download. Aborting download!")
-                dwn_filename = self.connection["options"]["filename"]
+                dwn_filename = self.connection["options"]["filename"] + '.tmp'
                 os.remove(dwn_filename)
                 self.disconnect(ssftp.EXITCODE.CONNECTION_LOST)
 
