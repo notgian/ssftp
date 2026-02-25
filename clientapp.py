@@ -167,14 +167,14 @@ def main(stdscr):
 
                 max_len = 30
                 # logs.append(str(addr)))
-                connwin.addstr(2, 2 + (2+max_len),f"{addr[0]}:{addr[1]}".center(max_len, " "), curses.A_REVERSE)
-                connwin.addstr(3, 2 + (2+max_len),f"state: {state}".center(max_len, " "), curses.A_NORMAL)
+                connwin.addstr(2, 2,f"{addr[0]}:{addr[1]}".center(max_len, " "), curses.A_REVERSE)
+                connwin.addstr(3, 2,f"state: {state}".center(max_len, " "), curses.A_NORMAL)
                 if conn["state"] == 0:
                     pass
                 else:
-                    connwin.addstr(4, 2 + (2+max_len),f"op: {op}".center(max_len, " "), curses.A_NORMAL)
-                    connwin.addstr(5, 2 + (2+max_len),f"file: {filename}".center(max_len, " "), curses.A_NORMAL)
-                    connwin.addstr(6, 2 + (2+max_len),f"bytes: {transferred}/{tsize}".center(max_len, " "), curses.A_NORMAL)
+                    connwin.addstr(4, 2,f"op: {op}".center(max_len, " "), curses.A_NORMAL)
+                    connwin.addstr(5, 2,f"file: {filename}".center(max_len, " "), curses.A_NORMAL)
+                    connwin.addstr(6, 2,f"bytes: {transferred}/{tsize}".center(max_len, " "), curses.A_NORMAL)
             connwin.noutrefresh()
         except curses.error:
             pass
