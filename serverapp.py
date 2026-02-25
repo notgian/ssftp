@@ -137,7 +137,7 @@ def main(stdscr):
                     block = None if "block" not in conn["options"] else int(conn["options"]["block"])
                     blksize = None if "blksize" not in conn["options"] else int(conn["options"]["blksize"])
                     tsize = "..." if "tsize" not in conn["options"] else int(conn["options"]["tsize"])
-                    transferred = "..." if block is None or blksize is None else block * blksize
+                    transferred = "..." if block is None or blksize is None else min(block * blksize, tsize)
                     # filename = conn["options"]["filename"]
 
                     max_len = 25
