@@ -99,13 +99,14 @@ class MSG_DWN(Message):
 
 
 class MSG_UPL(Message):
-    def __init__(self, filepath: str, mode: TRANSFER_MODES, tsize: int, blksize=DEFAULT_BLKSIZE, timeout=DEFAULT_TIMEOUT):
+    def __init__(self, filepath: str, mode: TRANSFER_MODES, tsize: int, blksize=DEFAULT_BLKSIZE, timeout=DEFAULT_TIMEOUT, **kwargs):
         self.filepath = filepath
         self.mode = mode
 
         self.tsize: int = tsize
         self.blksize: int = blksize
         self.timeout: int = timeout
+        self.otherOpts = dict(kwargs)
 
     def encode(self):
         message = OPCODE.UPL.value.get_bytes() + self.filepath.encode('ascii') + b'\x00'
@@ -117,6 +118,9 @@ class MSG_UPL(Message):
             message += 'blksize'.encode('ascii') + b'\x00' + str(self.blksize).encode('ascii') + b'\x00'
         if self.timeout is not None:
             message += 'timeout'.encode('ascii') + b'\x00' + str(self.timeout).encode('ascii') + b'\x00'
+
+        for optName in self.otherOpts.keys():
+            message += optName.encode('ascii') + b'\x00' + str(self.otherOpts[optName]).encode('ascii') + b'\x00'
         return message
 
 

@@ -485,12 +485,16 @@ class SSFTPClient():
     # existing or not existing. Please ensure to
     # check this is creating the operations for the client.
     def send_upl(self, filepath: str, transfer_mode: ssftp.TRANSFER_MODES):
+        with open(filepath, "rb") as f:
+            digest = hashlib.file_digest(f, "sha256")
+        hexdigest = digest.hexdigest()
         upl = ssftp.MSG_UPL(
                 filepath=filepath,
                 mode=transfer_mode,
                 blksize=CLIENT_BLKSIZE,
                 timeout=CLIENT_TIMEOUT,
-                tsize=os.path.getsize(filepath)
+                tsize=os.path.getsize(filepath),
+                sha256sum=hexdigest
         )
         self.connection['temp_opts'] = {
             'filepath': filepath,

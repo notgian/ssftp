@@ -219,6 +219,9 @@ class SSFTPServer():
             self.connections[addr]["options"]["terminating_block"] = False
             self.connections[addr]["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
 
+            if "sha256sum" in opts:
+                self.connections[addr]["options"]["sha256sum"] = opts["sha256sum"]
+
         if opcode == ssftp.OPCODE.DWN.value.get_int():
             # check if the filepath is STRICTLY only a local filepath
             # immediately deny if the start is a / or . or ..
@@ -301,9 +304,21 @@ class SSFTPServer():
         if len(data) < self.connections[addr]["options"]["blksize"]:
             last_ack_num = self.connections[addr]['options']['block'] + 1
             self.connections[addr]["state"] = 0
-            self.connections[addr]["options"] = dict()
-            self.thread_pool.submit(self._send_ack, last_ack_num, addr=addr)
             self.logger.info("End of file reached!")
+            self.thread_pool.submit(self._send_ack, last_ack_num, addr=addr)
+
+            if "sha256sum" in self.connections[addr]["options"]:
+                checksum = self.connections[addr]["options"]["sha256sum"]
+                with open(filename, "rb") as f:
+                    digest = hashlib.file_digest(f, "sha256")
+                hexdigest = digest.hexdigest()
+                self.logger.info(f"Checksum verification. Digest from client: {checksum}")
+                self.logger.info(f"Calculated digest of uploaded file: {hexdigest}")
+                if (checksum != hexdigest):
+                    self.logger.info(f"File was changed in transmission!")
+                else:
+                    self.logger.info(f"File is OK.")
+            self.connections[addr]["options"] = dict()
         else:
             self.connections[addr]["options"]["block"] += 1
             self.thread_pool.submit(self._send_ack, self.connections[addr]['options']['block'], addr=addr)
