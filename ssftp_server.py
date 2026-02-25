@@ -235,8 +235,9 @@ class SSFTPServer():
             tsize = os.path.getsize(filepath)
             # all is good, send oack
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
-            self.connections[addr]["socket"].sendto(oack.encode(), addr)
             set_opts()
+            # self.connections[addr]["socket"].sendto(oack.encode(), addr)
+            self.thread_pool.submit(self._send_oack, tsize, blksize, timeout, addr)
         elif opcode == ssftp.OPCODE.UPL.value.get_int():
             # check if tsize is included
             if "tsize" not in opts:
@@ -263,7 +264,7 @@ class SSFTPServer():
             # if all is good, send oack
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
             set_opts()
-            self.thread_pool.submit(self._send_upl_oack, tsize, blksize, timeout, addr)
+            self.thread_pool.submit(self._send_oack, tsize, blksize, timeout, addr)
 
     def _handle_err(self, msg, addr):
         self.logger.info(f"ERR from {addr}")
@@ -390,9 +391,7 @@ class SSFTPServer():
             self.connections[addr]["socket"].sendto(fin.encode(), addr)
             self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
-    # specifically for sending the oack for UPL
-    # functions like an ack to request for a retransmission
-    def _send_upl_oack(self, tsize, blksize, timeout, addr: tuple):
+    def _send_oack(self, tsize, blksize, timeout, addr: tuple):
         self.logger.info(f"Sending OACK to {addr} tsize={tsize} blksize={blksize} timeout={timeout}")
         retries = 0
         oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
@@ -403,12 +402,17 @@ class SSFTPServer():
                 if self.delay_packets: sleep(DEBUG_PACKET_DELAY / 1000)
                 self.connections[addr]["socket"].sendto(oack.encode(), addr)
             sleep(timeout/1000)
+            op = self.connections[addr]["options"]["op"]
             block = self.connections[addr]["options"]["block"]
-            if block == 2:
+            pending_ack = self.connections[addr]["options"]["pending_ack"]
+            # condition if upl
+            if op == ssftp.OPCODE.UPL.value.get_int() and block == 2:
+                break
+            elif op == ssftp.OPCODE.DWN.value.get_int() and pending_ack == 2:
                 break
             retries += 1
             if retries <= MAX_RETRIES:
-                self.logger.info(f"No data(1) received from {addr}. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
+                self.logger.info(f"No response received from {addr} for OACK. Retrying in {timeout} ms. ({retries}/{MAX_RETRIES})")
         if retries > MAX_RETRIES:
             self.logger.info(f"Max retries reached. Forcefully disconnectiong from {addr}")
             fin = ssftp.MSG_FIN(ssftp.EXITCODE.CONNECTION_LOST)
