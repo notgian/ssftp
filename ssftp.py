@@ -121,10 +121,11 @@ class MSG_UPL(Message):
 
 
 class MSG_OACK(Message):
-    def __init__(self, tsize: int, blksize=DEFAULT_BLKSIZE, timeout=DEFAULT_TIMEOUT):
+    def __init__(self, tsize: int, blksize=DEFAULT_BLKSIZE, timeout=DEFAULT_TIMEOUT, **kwargs):
         self.tsize: int = tsize
         self.blksize: int = blksize
         self.timeout: int = timeout
+        self.otherOpts = dict(kwargs)
 
     def encode(self):
         message = OPCODE.OACK.value.get_bytes()
@@ -132,6 +133,9 @@ class MSG_OACK(Message):
         message += 'blksize'.encode('ascii') + b'\x00' + str(self.blksize).encode('ascii') + b'\x00'
         message += 'tsize'.encode('ascii') + b'\x00' + str(self.tsize).encode('ascii') + b'\x00'
         message += 'timeout'.encode('ascii') + b'\x00' + str(self.timeout).encode('ascii') + b'\x00'
+        for optName in self.otherOpts.keys():
+            message += optName.encode('ascii') + b'\x00' + str(self.otherOpts[optName]).encode('ascii') + b'\x00'
+
         return message
 
 

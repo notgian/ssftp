@@ -1,4 +1,5 @@
 import socket
+import hashlib
 import ssftp
 from threading import Thread
 from time import sleep
@@ -234,10 +235,12 @@ class SSFTPServer():
                 return
             tsize = os.path.getsize(filepath)
             # all is good, send oack
-            oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
             set_opts()
-            # self.connections[addr]["socket"].sendto(oack.encode(), addr)
-            self.thread_pool.submit(self._send_oack, tsize, blksize, timeout, addr)
+            with open(filename, "rb") as f:
+                digest = hashlib.file_digest(f, "sha256")
+            hexdigest = digest.hexdigest()
+
+            self.thread_pool.submit(self._send_oack, addr, tsize, blksize, timeout, sha256sum=hexdigest)
         elif opcode == ssftp.OPCODE.UPL.value.get_int():
             # check if tsize is included
             if "tsize" not in opts:
@@ -264,7 +267,7 @@ class SSFTPServer():
             # if all is good, send oack
             oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
             set_opts()
-            self.thread_pool.submit(self._send_oack, tsize, blksize, timeout, addr)
+            self.thread_pool.submit(self._send_oack, addr, tsize, blksize, timeout)
 
     def _handle_err(self, msg, addr):
         self.logger.info(f"ERR from {addr}")
@@ -391,10 +394,10 @@ class SSFTPServer():
             self.connections[addr]["socket"].sendto(fin.encode(), addr)
             self.disconnect(addr=addr, exit_code=ssftp.EXITCODE.CONNECTION_LOST)
 
-    def _send_oack(self, tsize, blksize, timeout, addr: tuple):
+    def _send_oack(self, addr: tuple, tsize, blksize, timeout, **kwargs):
         self.logger.info(f"Sending OACK to {addr} tsize={tsize} blksize={blksize} timeout={timeout}")
         retries = 0
-        oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout)
+        oack = ssftp.MSG_OACK(tsize=tsize, blksize=blksize, timeout=timeout, **kwargs)
         while retries <= MAX_RETRIES:
             if self.drop_packets:
                 pass

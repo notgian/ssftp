@@ -1,4 +1,5 @@
 import socket
+import hashlib
 import ssftp
 from threading import Thread
 from time import sleep
@@ -241,6 +242,8 @@ class SSFTPClient():
         self.connection["options"]["data"] = bytes()
         self.connection["options"]["terminating_block"] = False
         self.connection["options"]["pending_ack"] = initial_block + 1  # useless for UPL but still putting it here
+        if "sha256sum" in opts:
+            self.connection["options"]["sha256sum"] = opts["sha256sum"]
 
         # send an ack to receive block 1
         if opcode == ssftp.OPCODE.DWN.value.get_int():
@@ -271,13 +274,26 @@ class SSFTPClient():
         # this marks the end of a transaction
         if len(data) < self.connection["options"]["blksize"]:
             last_ack_num = self.connection['options']['block'] + 1
+            self.logger.info("End of file reached!!!")
             self.connection["state"] = 0
-            self.connection["options"] = dict()
-            self.logger.info("End of file reached!")
             Thread(target=lambda: self._send_ack(last_ack_num, self.connection['addr'])).start()
+
             if os.path.exists(filename) and os.path.isfile(filename):
                 os.remove(filename)
             os.rename(filename_temp, filename)
+
+            if "sha256sum" in self.connection["options"]:
+                checksum = self.connection["options"]["sha256sum"]
+                with open(filename, "rb") as f:
+                    digest = hashlib.file_digest(f, "sha256")
+                hexdigest = digest.hexdigest()
+                self.logger.info(f"Checksum verification. Digest from server: {checksum}")
+                self.logger.info(f"Calculated digest of received file: {hexdigest}")
+                if (checksum != hexdigest):
+                    self.logger.info(f"File was changed in transmission!")
+                else:
+                    self.logger.info(f"File is OK.")
+            self.connection["options"] = dict()
         else:
             self.connection["options"]["block"] += 1
             Thread(target=lambda: self._send_ack(self.connection['options']['block'], self.connection['addr'])).start()
