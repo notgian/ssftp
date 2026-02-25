@@ -210,7 +210,7 @@ def main(stdscr):
             footerwin.erase()
             footerwin.resize(footerwin_h, footerwin_w)
             footerwin.mvwin(footerwin_y, footerwin_x)
-            footer_text1 = "Q - QUIT   U - DROP PACKETS   I - DELAY PACKETS   C - CONNECT   W - READ   R - DOWNLOAD   F1 - CLOSE MENU".center(footerwin_w-2)
+            footer_text1 = "X - DISCONNECT   Q - QUIT   U - DROP PACKETS   I - DELAY PACKETS   C - CONNECT   W - READ   R - DOWNLOAD   F1 - CLOSE MENU".center(footerwin_w-2)
             if len(footer_text1) > footerwin_w:
                 footer_text1 = footer_text1[:footerwin_w-4] + "..."
             footerwin.addstr(0, 1, footer_text1, curses.A_STANDOUT)
@@ -340,9 +340,11 @@ def main(stdscr):
         except curses.error:
             pass
 
-        if key == ord('q'):
+        if key == ord('q') or key == ord('Q'):
             ssftp_client.kill()
             break
+        elif key == ord('x') or key == ord('X'):
+            ssftp_client.graceful_disconnect()
         elif key == ord('u') or key == ord('U'):
             ssftp_client.drop_packets = not ssftp_client.drop_packets
         elif key == ord('i') or key == ord('I'):

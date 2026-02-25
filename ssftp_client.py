@@ -77,6 +77,16 @@ class SSFTPClient():
     def kill(self):
         signal.raise_signal(signal.SIGINT)
 
+    # sends a fin and waits for response to exit.
+    # or just closes if no connection
+    def graceful_disconnect(self):
+        if self.connection['addr'] is None:
+            self.logger.info("No connections active. Nothing to disconnect to.")
+            return
+        self.logger.info("Sending FIN and attempting graceful disconnect...")
+        fin = ssftp.MSG_FIN(ssftp.EXITCODE.SUCCESS)
+        self.socket.sendto(fin.encode(), self.connection['addr'])
+
     # =======================
     # MESSAGE HANDLING
     # =======================
@@ -380,7 +390,11 @@ class SSFTPClient():
         self.disconnect(exit_code=exit_code)
 
     def _handle_finack(self, msg, addr):
-        pass
+        self.logger.info(f"FINACK from {addr}")
+        if addr != self.connection['addr']:
+            self.logger.info("FINACK ignored as it comes from a different address")
+        # self.logger.info(f"Gracefully disconnecting from {addr}")
+        self.disconnect(exit_code=ssftp.EXITCODE.SUCCESS)
 
     # =========================
     # Listener Functions

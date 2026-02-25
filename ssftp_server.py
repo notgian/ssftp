@@ -431,6 +431,8 @@ class SSFTPServer():
                     os.remove(upl_filename)
         # disconnect
         exit_code = int.from_bytes(msg[2:4], 'big')
+        finack = ssftp.MSG_FINACK()
+        self.connections[addr]["socket"].sendto(finack.encode(), addr)
         self.disconnect(addr=addr, exit_code=exit_code)
 
     def _handle_finack(self, msg, addr):
